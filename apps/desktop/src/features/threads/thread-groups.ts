@@ -9,6 +9,10 @@ import type {
 import type { ChildSelectedConfiguration } from "../../../contracts/child-selection";
 import type { AllThreadsSort, FolderPreference } from "../../../contracts/sidebar-preferences";
 import {
+  projectIdentity_fallbackAccent,
+  type ProjectAccentColor,
+} from "../../../contracts/project-identity";
+import {
   compareByRecency,
   RECENCY_BUCKET_LABELS,
   RECENCY_BUCKET_ORDER,
@@ -41,6 +45,7 @@ export interface ThreadListEntry {
   readonly folderId: string;
   readonly workspaceId: string;
   readonly session: SessionRecord;
+  readonly accentColor: ProjectAccentColor;
   readonly environment: ThreadEnvironmentMeta;
   readonly contextLabel: string;
   /** Set when this row is drawn nested under its parent thread's row. */
@@ -99,6 +104,7 @@ export interface RecencyThreadSection {
 
 export interface ThreadSidebarModel {
   readonly folders: readonly WorkspaceRecord[];
+  readonly accentColors: Readonly<Record<string, ProjectAccentColor>>;
   readonly workspaceGroups: readonly WorkspaceThreadGroup[];
   readonly pinnedThreads: readonly ThreadListEntry[];
   readonly recencySections: readonly RecencyThreadSection[];
@@ -169,6 +175,13 @@ export function buildThreadSidebarModel(
   const folders = listFolders(state);
   return {
     folders,
+    accentColors: Object.fromEntries(
+      folders.map((workspace) => [
+        workspace.id,
+        state.sidebarAppearance?.projectByWorkspaceId[workspace.id]?.accentColor ??
+          projectIdentity_fallbackAccent(workspace.id),
+      ]),
+    ),
     workspaceGroups: folders.map((workspace) => ({
       workspace,
       threads: workspaceHistoryThreads.filter((entry) => entry.folderId === workspace.id),
@@ -317,11 +330,15 @@ function collectThreadEntries(state: DesktopAppState): ThreadListEntry[] {
   );
   const folders = listFolders(state);
   return folders.flatMap((folder) => {
+    const accentColor =
+      state.sidebarAppearance?.projectByWorkspaceId[folder.id]?.accentColor ??
+      projectIdentity_fallbackAccent(folder.id);
     if (folder.kind !== "primary") {
       return folder.sessions.map((session) => ({
         folderId: folder.id,
         workspaceId: folder.id,
         session,
+        accentColor,
         environment: {
           kind: "worktree" as const,
           label: folder.name,
@@ -353,6 +370,7 @@ function collectThreadEntries(state: DesktopAppState): ThreadListEntry[] {
         folderId: folder.id,
         workspaceId: folder.id,
         session,
+        accentColor,
         environment: {
           kind: "local" as const,
           label: "Local",
@@ -364,6 +382,7 @@ function collectThreadEntries(state: DesktopAppState): ThreadListEntry[] {
           folderId: folder.id,
           workspaceId: workspace.id,
           session,
+          accentColor,
           environment: {
             kind: "worktree" as const,
             label: worktree.name,

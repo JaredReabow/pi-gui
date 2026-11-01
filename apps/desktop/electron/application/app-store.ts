@@ -30,7 +30,7 @@ import { JsonCatalogStore } from "@pi-gui/catalogs/node";
 import { sessionKey } from "@pi-gui/session-driver";
 import type { ExtensionFlagValues, SessionSchemaInfo } from "@pi-gui/session-driver";
 import type { BrowserWindow } from "electron";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -4420,6 +4420,7 @@ export class DesktopAppStore {
       const next = projectIdentity_assignMissingAccents(
         this.workspaceAccentColors,
         this.appearanceWorkspaceInputs(workspaces),
+        () => randomInt(0, 0x100000000) / 0x100000000,
       );
       if (accentColorMapsEqual(next, this.workspaceAccentColors)) {
         return this.workspaceAccentColors;

@@ -34,6 +34,19 @@ for (const invalid of [
     version: 20,
     activityIndicatorPreference: { style: "spiral", source: "user", credential: "forbidden" },
   },
+  { version: 20, preventSleep: "false" },
+  { version: 20, allowCrossProjectThreadCommands: 1 },
+  { version: 20, lastHumanInputAtBySession: { "ws:sess": 42 } },
+  {
+    version: 20,
+    sessionOrigins: {
+      "ws:child": {
+        kind: "subagent",
+        parentWorkspaceId: "ws",
+        parentSessionId: 42,
+      },
+    },
+  },
   [],
 ]) {
   test(`preserves invalid UI state ${JSON.stringify(invalid)}`, async () => {
@@ -47,6 +60,70 @@ for (const invalid of [
     expect(await readFile(path, "utf8")).toBe(original);
   });
 }
+
+test("migrates installed 1.0.14 UI state fields into the current projections", () => {
+  const decoded = decodePersistedUiState({
+    version: 20,
+    preventSleep: false,
+    allowCrossProjectThreadCommands: true,
+    lastHumanInputAtBySession: {
+      "ws:legacy": "2026-11-01T10:00:00.000Z",
+      "ws:both": "2026-11-01T09:00:00.000Z",
+    },
+    lastInteractedAtBySession: {
+      "ws:current": "2026-11-01T11:00:00.000Z",
+      "ws:both": "2026-11-01T12:00:00.000Z",
+    },
+    sessionOrigins: {
+      "ws:legacy-child": {
+        kind: "subagent",
+        parentWorkspaceId: "ws",
+        parentSessionId: "parent",
+      },
+    },
+    initiatingOriginBySession: {
+      "ws:current-child": { kind: "tool", source: "desktop-host" },
+    },
+    orchestrationChildren: [
+      {
+        id: "child",
+        parentWorkspaceId: "ws",
+        parentSessionId: "parent",
+        childWorkspaceId: "ws",
+        childSessionId: "child",
+        title: "Legacy child",
+        goal: "Keep the old child model",
+        modelProvider: "deepseek",
+        modelId: "deepseek-flash",
+        thinkingLevel: "high",
+        status: "complete",
+        latestTranscript: "Done",
+        createdAt: "2026-11-01T10:00:00.000Z",
+        updatedAt: "2026-11-01T10:01:00.000Z",
+      },
+    ],
+  });
+
+  expect(decoded.preventSleep).toBe(false);
+  expect(decoded.allowCrossProjectThreadCommands).toBe(true);
+  expect(decoded.lastInteractedAtBySession).toEqual({
+    "ws:legacy": "2026-11-01T10:00:00.000Z",
+    "ws:current": "2026-11-01T11:00:00.000Z",
+    "ws:both": "2026-11-01T12:00:00.000Z",
+  });
+  expect(decoded.initiatingOriginBySession).toEqual({
+    "ws:legacy-child": { kind: "tool", source: "desktop-host" },
+    "ws:current-child": { kind: "tool", source: "desktop-host" },
+  });
+  expect(decoded.orchestrationChildren?.[0]?.selectedConfig).toEqual({
+    provider: "deepseek",
+    modelId: "deepseek-flash",
+    thinkingLevel: "high",
+  });
+  expect(() =>
+    decodePersistedUiState({ version: 20, lastHumanInputAtBySession: {}, unknown: true }),
+  ).toThrow(/unsupported field/);
+});
 
 test("reads v15 ui-state without lastInteractedAt and writes v20", async () => {
   const path = join(await mkdtemp(join(tmpdir(), "ui-state-recency-")), "ui-state.json");

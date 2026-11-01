@@ -29,6 +29,7 @@ import {
   type TelemetryConsentStatusSnapshot,
 } from "./telemetry-consent";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "./workbench";
+import type { SetProjectAccentColorInput } from "./project-identity";
 import type {
   TurnChangesInput,
   TurnChangesResult,
@@ -170,6 +171,7 @@ export const desktopIpc = {
   markAllThreadsRead: "pi-gui:mark-all-threads-read",
   setFolderPreference: "pi-gui:set-folder-preference",
   setAllThreadsSort: "pi-gui:set-all-threads-sort",
+  setProjectAccentColor: "pi-gui:set-project-accent-color",
   getEffectiveChildModelSettings: "pi-gui:get-effective-child-model-settings",
   setSessionPinned: "pi-gui:set-session-pinned",
   createSession: "pi-gui:create-session",
@@ -1227,6 +1229,7 @@ export interface PiDesktopApi {
   markAllThreadsRead(input: MarkAllThreadsReadInput): Promise<DesktopAppState>;
   setFolderPreference(workspaceId: string, preference: FolderPreference): Promise<DesktopAppState>;
   setAllThreadsSort(sort: AllThreadsSort): Promise<DesktopAppState>;
+  setProjectAccentColor(input: SetProjectAccentColorInput): Promise<DesktopAppState>;
   getEffectiveChildModelSettings(workspaceId: string): Promise<EffectiveChildModelSettings>;
   setSessionPinned(target: WorkspaceSessionTarget, pinned: boolean): Promise<DesktopAppState>;
   createSession(input: CreateSessionInput): Promise<DesktopAppState>;

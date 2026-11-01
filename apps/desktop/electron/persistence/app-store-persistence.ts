@@ -87,6 +87,20 @@ export interface PersistedUiState {
 export interface LegacyPersistedUiState extends PersistedUiState {
   readonly composerAttachmentsBySession?: Record<string, readonly unknown[]>;
   readonly transcripts?: Record<string, readonly unknown[]>;
+  /**
+   * Compatibility fields emitted by the installed 1.0.14 repair build.
+   * They are decoded here so upgrading does not reject the entire UI state.
+   */
+  readonly preventSleep?: boolean;
+  readonly allowCrossProjectThreadCommands?: boolean;
+  readonly lastHumanInputAtBySession?: Record<string, string>;
+  readonly sessionOrigins?: Record<string, LegacySessionOrigin>;
+}
+
+interface LegacySessionOrigin {
+  readonly kind: "human" | "scheduled" | "subagent" | "tool";
+  readonly parentWorkspaceId?: string;
+  readonly parentSessionId?: string;
 }
 
 export async function readPersistedUiState(
@@ -137,7 +151,10 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
         ? candidate.integratedTerminalShell
         : undefined,
     lastViewedAtBySession: toStringRecord(candidate.lastViewedAtBySession),
-    lastInteractedAtBySession: toStringRecord(candidate.lastInteractedAtBySession),
+    lastInteractedAtBySession: mergeStringRecords(
+      candidate.lastHumanInputAtBySession,
+      candidate.lastInteractedAtBySession,
+    ),
     pinnedAtBySession: toStringRecord(candidate.pinnedAtBySession),
     pinnedSessionOrder: toStringArray(candidate.pinnedSessionOrder),
     workspaceOrder: toStringArray(candidate.workspaceOrder),
@@ -156,14 +173,10 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
     folderPreferencesByWorkspace:
       candidate.folderPreferencesByWorkspace as PersistedUiState["folderPreferencesByWorkspace"],
     allThreadsSort: candidate.allThreadsSort as AllThreadsSort | undefined,
-    initiatingOriginBySession:
-      candidate.initiatingOriginBySession === undefined
-        ? undefined
-        : Object.fromEntries(
-            Object.entries(candidate.initiatingOriginBySession as Record<string, unknown>).map(
-              ([key, value]) => [key, childSelection_decodeInitiatingOrigin(value)],
-            ),
-          ),
+    initiatingOriginBySession: mergeInitiatingOrigins(
+      candidate.sessionOrigins,
+      candidate.initiatingOriginBySession,
+    ),
     createdAtBySession: toStringRecord(candidate.createdAtBySession),
     allowMultiple:
       typeof candidate.allowMultiple === "boolean" ? candidate.allowMultiple : undefined,
@@ -180,6 +193,13 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
       candidate.activityIndicatorPreference === undefined
         ? undefined
         : sidebarPreferences_decodeDurableActivityPreference(candidate.activityIndicatorPreference),
+    preventSleep: typeof candidate.preventSleep === "boolean" ? candidate.preventSleep : undefined,
+    allowCrossProjectThreadCommands:
+      typeof candidate.allowCrossProjectThreadCommands === "boolean"
+        ? candidate.allowCrossProjectThreadCommands
+        : undefined,
+    lastHumanInputAtBySession: toStringRecord(candidate.lastHumanInputAtBySession),
+    sessionOrigins: toLegacySessionOrigins(candidate.sessionOrigins),
     composerAttachmentsBySession: toObjectArrayRecord(candidate.composerAttachmentsBySession),
     transcripts: toObjectArrayRecord(candidate.transcripts),
   };
@@ -283,6 +303,7 @@ function validateUiState(value: unknown): Record<string, unknown> {
       "integratedTerminalShell",
       "lastViewedAtBySession",
       "lastInteractedAtBySession",
+      "lastHumanInputAtBySession",
       "pinnedAtBySession",
       "pinnedSessionOrder",
       "workspaceOrder",
@@ -295,8 +316,11 @@ function validateUiState(value: unknown): Record<string, unknown> {
       "allThreadsSort",
       "createdAtBySession",
       "initiatingOriginBySession",
+      "sessionOrigins",
       "allowMultiple",
+      "allowCrossProjectThreadCommands",
       "enableTransparency",
+      "preventSleep",
       "themeMode",
       "themePresetId",
       "orchestrationChildren",
@@ -340,6 +364,7 @@ function validateUiState(value: unknown): Record<string, unknown> {
     "composerDraftsBySession",
     "lastViewedAtBySession",
     "lastInteractedAtBySession",
+    "lastHumanInputAtBySession",
     "pinnedAtBySession",
   ])
     optional(root, key, stringRecord);
@@ -350,7 +375,13 @@ function validateUiState(value: unknown): Record<string, unknown> {
     "collapsedWorkspaceIds",
   ])
     optional(root, key, strings);
-  for (const key of ["sidebarCollapsed", "allowMultiple", "enableTransparency"])
+  for (const key of [
+    "sidebarCollapsed",
+    "allowMultiple",
+    "allowCrossProjectThreadCommands",
+    "enableTransparency",
+    "preventSleep",
+  ])
     optional(root, key, boolean);
   optional(root, "activeView", (v) => toAppView(v) !== undefined);
   optional(root, "threadGrouping", isThreadGrouping);
@@ -368,6 +399,21 @@ function validateUiState(value: unknown): Record<string, unknown> {
       return false;
     }
     return true;
+  });
+  optional(root, "sessionOrigins", (v) => {
+    const r = objectRecord(v);
+    if (!r) return false;
+    return Object.values(r).every((value) => {
+      const origin = objectRecord(value);
+      if (!origin) return false;
+      const keys = Object.keys(origin);
+      return (
+        keys.every((key) => ["kind", "parentWorkspaceId", "parentSessionId"].includes(key)) &&
+        ["human", "scheduled", "subagent", "tool"].includes(origin.kind as string) &&
+        (origin.parentWorkspaceId === undefined || typeof origin.parentWorkspaceId === "string") &&
+        (origin.parentSessionId === undefined || typeof origin.parentSessionId === "string")
+      );
+    });
   });
   optional(root, "createdAtBySession", (v) => {
     const r = objectRecord(v);
@@ -494,6 +540,9 @@ function validateUiState(value: unknown): Record<string, unknown> {
           "sourceToolCallId",
           "origin",
           "selectedConfig",
+          "modelProvider",
+          "modelId",
+          "thinkingLevel",
           "parentWorkspaceId",
           "parentSessionId",
           "childWorkspaceId",
@@ -522,6 +571,8 @@ function validateUiState(value: unknown): Record<string, unknown> {
       }
       if (record.selectedConfig !== undefined)
         childSelection_decodeSelectedConfig(record.selectedConfig);
+      for (const key of ["modelProvider", "modelId", "thinkingLevel"])
+        optional(record, key, string, `${path}.${key}`);
       for (const key of [
         "id",
         "sourceToolCallId",
@@ -729,6 +780,16 @@ function toPersistedOrchestrationChildren(value: unknown): OrchestrationChildThr
     const sourceToolCallId = stringValue(candidate.sourceToolCallId);
     const status = toOrchestrationStatus(candidate.status);
     const supervisionLoop = toPersistedSupervisionLoop(candidate.supervisionLoop, status);
+    const legacySelectedConfig =
+      candidate.modelProvider !== undefined ||
+      candidate.modelId !== undefined ||
+      candidate.thinkingLevel !== undefined
+        ? childSelection_decodeSelectedConfig({
+            provider: candidate.modelProvider,
+            modelId: candidate.modelId,
+            thinkingLevel: candidate.thinkingLevel,
+          })
+        : undefined;
     return [
       {
         id,
@@ -737,7 +798,9 @@ function toPersistedOrchestrationChildren(value: unknown): OrchestrationChildThr
           ? {}
           : { origin: childSelection_decodeOrigin(candidate.origin) }),
         ...(candidate.selectedConfig === undefined
-          ? {}
+          ? legacySelectedConfig
+            ? { selectedConfig: legacySelectedConfig }
+            : {}
           : { selectedConfig: childSelection_decodeSelectedConfig(candidate.selectedConfig) }),
         parentWorkspaceId,
         parentSessionId,
@@ -954,6 +1017,77 @@ function toStringRecord(value: unknown): Record<string, string> | undefined {
       Boolean(entry[0]) && typeof entry[1] === "string" && Boolean(entry[1]),
   );
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+/** Prefer the current activity field while importing the installed 1.0.14 name. */
+function mergeStringRecords(
+  legacyValue: unknown,
+  currentValue: unknown,
+): Record<string, string> | undefined {
+  const legacy = toStringRecord(legacyValue);
+  const current = toStringRecord(currentValue);
+  if (!legacy && !current) {
+    return undefined;
+  }
+  const merged = Object.create(null) as Record<string, string>;
+  for (const source of [legacy, current]) {
+    for (const [key, value] of Object.entries(source ?? {})) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function toLegacySessionOrigins(value: unknown): Record<string, LegacySessionOrigin> | undefined {
+  const entries = Object.entries(objectRecord(value) ?? {}).flatMap(
+    ([key, value]): [string, LegacySessionOrigin][] => {
+      if (!key) return [];
+      const origin = objectRecord(value);
+      if (!origin) return [];
+      const kind = origin.kind;
+      if (kind !== "human" && kind !== "scheduled" && kind !== "subagent" && kind !== "tool") {
+        return [];
+      }
+      const parentWorkspaceId =
+        typeof origin.parentWorkspaceId === "string" ? origin.parentWorkspaceId : undefined;
+      const parentSessionId =
+        typeof origin.parentSessionId === "string" ? origin.parentSessionId : undefined;
+      return [
+        [
+          key,
+          {
+            kind,
+            ...(parentWorkspaceId === undefined ? {} : { parentWorkspaceId }),
+            ...(parentSessionId === undefined ? {} : { parentSessionId }),
+          },
+        ],
+      ];
+    },
+  );
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+/** Merge legacy child origins with the current host-authored initiating-origin projection. */
+function mergeInitiatingOrigins(
+  legacyValue: unknown,
+  currentValue: unknown,
+): Record<string, SessionInitiatingOrigin> | undefined {
+  const legacy = toLegacySessionOrigins(legacyValue);
+  const current = objectRecord(currentValue);
+  if (!legacy && !current) {
+    return undefined;
+  }
+  const merged = Object.create(null) as Record<string, SessionInitiatingOrigin>;
+  for (const [key, origin] of Object.entries(legacy ?? {})) {
+    merged[key] = {
+      kind: origin.kind === "subagent" ? "tool" : origin.kind,
+      source: "desktop-host",
+    };
+  }
+  for (const [key, origin] of Object.entries(current ?? {})) {
+    merged[key] = childSelection_decodeInitiatingOrigin(origin);
+  }
+  return merged;
 }
 
 /** Shape is checked by validateUiState; empty records are dropped. */

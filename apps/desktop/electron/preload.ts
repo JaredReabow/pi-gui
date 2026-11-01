@@ -56,6 +56,7 @@ import {
 } from "../contracts/ipc";
 import type { ExtensionActionEffect, ExtensionActionRequest } from "../contracts/extension-actions";
 import type { ClipboardImageRead } from "../contracts/composer-attachments";
+import type { SetProjectAccentColorInput } from "../contracts/project-identity";
 import type { DesktopEditorList } from "../contracts/editors";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "../contracts/workbench";
 import type {
@@ -338,6 +339,8 @@ contextBridge.exposeInMainWorld("piApp", {
     }) as Promise<DesktopAppState>,
   setAllThreadsSort: (sort: AllThreadsSort) =>
     ipcRenderer.invoke(desktopIpc.setAllThreadsSort, sort) as Promise<DesktopAppState>,
+  setProjectAccentColor: (input: SetProjectAccentColorInput) =>
+    ipcRenderer.invoke(desktopIpc.setProjectAccentColor, input) as Promise<DesktopAppState>,
   getEffectiveChildModelSettings: (workspaceId: string) =>
     ipcRenderer.invoke(
       desktopIpc.getEffectiveChildModelSettings,

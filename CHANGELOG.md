@@ -44,3 +44,6 @@
 - Added packaged startup, thread creation, integrated terminal, installation, and signature
   verification. Notarization remains a release gate because notarization credentials were
   not available to this build.
+- Added backward-compatible import for the installed 1.0.14 UI state, including legacy
+  activity timestamps, child origins, orchestration model metadata, and runtime preference
+  fields, so upgrading retains the existing project and thread list.

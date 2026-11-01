@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   getSelectedSession,
   desktopState_humanInputHistory,
@@ -97,6 +97,16 @@ import { useComposerDraftSync } from "../features/conversation/hooks/use-compose
 import { useSessionComposer } from "../features/conversation/hooks/use-session-composer";
 import { useTranscriptAnnotations } from "../features/conversation/annotations/use-transcript-annotations";
 import { SidebarDrawerBackdrop, useNarrowSidebarDrawer } from "../features/threads/sidebar-drawer";
+import {
+  projectIdentity_accentInk,
+  projectIdentity_fallbackAccent,
+  type ProjectAccentColor,
+} from "../../contracts/project-identity";
+
+type WorkspaceAccentStyle = CSSProperties & {
+  readonly "--workspace-accent": ProjectAccentColor;
+  readonly "--workspace-accent-ink": "#111318" | "#ffffff";
+};
 
 export default function App() {
   const desktop = useDesktopAppState();
@@ -192,6 +202,13 @@ export default function App() {
   const selectedSession = snapshot
     ? (getSelectedSession(snapshot) ?? selectedWorkspace?.sessions[0])
     : undefined;
+  const selectedWorkspaceAccent =
+    snapshot?.sidebarAppearance?.projectByWorkspaceId[selectedWorkspace?.id ?? ""]?.accentColor ??
+    projectIdentity_fallbackAccent(selectedWorkspace?.id ?? "default-project");
+  const shellStyle: WorkspaceAccentStyle = {
+    "--workspace-accent": selectedWorkspaceAccent,
+    "--workspace-accent-ink": projectIdentity_accentInk(selectedWorkspaceAccent),
+  };
   const selectedRuntime = selectedWorkspace
     ? snapshot?.runtimeByWorkspace[selectedWorkspace.id]
     : undefined;
@@ -975,7 +992,7 @@ export default function App() {
   const shellClassName = `shell${snapshot.sidebarCollapsed ? " shell--sidebar-collapsed" : ""}`;
 
   return (
-    <div className={shellClassName}>
+    <div className={shellClassName} style={shellStyle} data-testid="app-shell">
       {primarySidebarToggleVisible ? (
         <SidebarToggleButton
           collapsed={snapshot.sidebarCollapsed}
@@ -1016,7 +1033,11 @@ export default function App() {
         />
       ) : null}
 
-      <main className={mainClassName} style={workbenchWidth.style}>
+      <main
+        className={mainClassName}
+        data-testid="main-surface"
+        style={{ ...workbenchWidth.style, ...shellStyle }}
+      >
         <Topbar
           activeView={snapshot.activeView}
           rootWorkspace={

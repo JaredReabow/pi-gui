@@ -187,7 +187,7 @@ function TimelineMessage({
               From project {crossProject.project}
             </div>
           ) : null}
-          <div className="timeline-item__bubble">
+          <div className="timeline-item__bubble" data-testid="user-message-bubble">
             {item.attachments?.length ? (
               <div className="timeline-item__attachments">
                 {item.attachments.map((attachment, index) =>

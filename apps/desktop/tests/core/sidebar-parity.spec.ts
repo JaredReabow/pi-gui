@@ -230,7 +230,7 @@ async function setLargeSessionsUnread(
 async function installMarkReadCapture(
   harness: DesktopHarness,
   options: {
-    readonly delayFirstBatchMs?: number;
+    readonly holdFirstBatch?: boolean;
     readonly failAfterBatch?: number;
   } = {},
 ): Promise<void> {
@@ -243,7 +243,7 @@ async function installMarkReadCapture(
         readonly finishes: string[][];
         readonly errors: string[];
         readonly original: InvokeHandler;
-        delayFirstBatchMs: number;
+        holdFirstBatch: boolean;
         failAfterBatch?: number;
       };
       const invokeHandlers = (
@@ -254,7 +254,11 @@ async function installMarkReadCapture(
       const store = globalThis as typeof globalThis & {
         __PI_D1_MARK_READ_CAPTURE__?: Record<string, Capture>;
       };
+      const releaseStore = globalThis as typeof globalThis & {
+        __PI_D1_MARK_READ_RELEASE__?: Record<string, (() => void) | undefined>;
+      };
       store.__PI_D1_MARK_READ_CAPTURE__ ??= {};
+      releaseStore.__PI_D1_MARK_READ_RELEASE__ ??= {};
       if (store.__PI_D1_MARK_READ_CAPTURE__[payload.channel]) {
         throw new Error("Mark-read capture is already installed");
       }
@@ -264,7 +268,7 @@ async function installMarkReadCapture(
         finishes: [],
         errors: [],
         original,
-        delayFirstBatchMs: payload.delayFirstBatchMs,
+        holdFirstBatch: payload.holdFirstBatch,
         failAfterBatch: payload.failAfterBatch,
       };
       store.__PI_D1_MARK_READ_CAPTURE__[payload.channel] = capture;
@@ -280,8 +284,11 @@ async function installMarkReadCapture(
         ) as string[];
         capture.batches.push(ids);
         capture.starts.push(ids);
-        if (capture.starts.length === 1 && capture.delayFirstBatchMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, capture.delayFirstBatchMs));
+        if (capture.starts.length === 1 && capture.holdFirstBatch) {
+          await new Promise<void>((resolve) => {
+            releaseStore.__PI_D1_MARK_READ_RELEASE__![payload.channel] = resolve;
+          });
+          delete releaseStore.__PI_D1_MARK_READ_RELEASE__![payload.channel];
         }
         if (
           capture.failAfterBatch !== undefined &&
@@ -298,10 +305,21 @@ async function installMarkReadCapture(
     },
     {
       channel: desktopIpc.markAllThreadsRead,
-      delayFirstBatchMs: options.delayFirstBatchMs ?? 0,
+      holdFirstBatch: options.holdFirstBatch ?? false,
       failAfterBatch: options.failAfterBatch,
     },
   );
+}
+
+async function releaseMarkReadCapture(harness: DesktopHarness): Promise<void> {
+  await harness.electronApp.evaluate((_electron, channel) => {
+    const store = globalThis as typeof globalThis & {
+      __PI_D1_MARK_READ_RELEASE__?: Record<string, (() => void) | undefined>;
+    };
+    const release = store.__PI_D1_MARK_READ_RELEASE__?.[channel];
+    if (!release) throw new Error(`Mark-read capture is not waiting: ${channel}`);
+    release();
+  }, desktopIpc.markAllThreadsRead);
 }
 
 async function readMarkReadCapture(harness: DesktopHarness): Promise<MarkReadCapture> {
@@ -890,7 +908,7 @@ test("mark all read drives bounded real IPC, keeps a captured snapshot and repor
         .map((session) => ({ workspaceId: workspace.id, sessionId: session.id })),
     );
     expect(unreadRefs).toHaveLength(sidebarPreferences_markReadLimit + 2);
-    await installMarkReadCapture(secondRun, { delayFirstBatchMs: 1_000 });
+    await installMarkReadCapture(secondRun, { holdFirstBatch: true });
 
     const beforeCancel = (await getDesktopState(window)).lastViewedAtBySession;
     let dialogAction: "accept" | "dismiss" = "dismiss";
@@ -937,6 +955,15 @@ test("mark all read drives bounded real IPC, keeps a captured snapshot and repor
         preview: "Later unread update",
       },
     });
+    await expect
+      .poll(async () => {
+        const state = await getDesktopState(window);
+        return state.workspaces
+          .flatMap((workspace) => workspace.sessions)
+          .find((session) => session.id === lateRef!.sessionId)?.updatedAt;
+      })
+      .toBe(lateUpdatedAt);
+    await releaseMarkReadCapture(secondRun);
     await expect(window.getByTestId("mark-all-threads-read-report")).toHaveText(
       `Marked all ${sidebarPreferences_markReadLimit + 2} unread threads as read.`,
     );

@@ -417,7 +417,13 @@ test("verifies Stage 2 appearance retention across independent Main round trips"
         await v19Main.initialize();
         const v19Saved = JSON.parse(await readFile(v19Seed.path, "utf8"));
         assert.equal(v19Saved.version, 20);
-        same(v19Saved.workspaceAccentColors, { "present-root": "#e8752f" });
+        const migratedColor = v19Saved.workspaceAccentColors["present-root"];
+        assert.ok(
+          ["#5b8def", "#18a999", "#43a047", "#e0a100", "#e8752f", "#d84f72", "#8c6bd8", "#6d7f96"].includes(
+            migratedColor
+          )
+        );
+        assert.equal(v19Main.workspaceAccentColors["present-root"], migratedColor);
         assert.equal(Object.hasOwn(v19Saved, "activityIndicatorPreference"), false);
         const migrationCopies = (await readdir(v19Seed.dir)).filter((name) =>
           name.startsWith("ui-state.pre-workbench-v19."),

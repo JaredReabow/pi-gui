@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createEmptyDesktopAppState, type DesktopAppState } from "../../contracts/desktop-state";
 import {
+  projectIdentity_accentInk,
   projectIdentity_assignMissingAccents,
   projectIdentity_decodeAccentColors,
   projectIdentity_decodeColor,
@@ -227,6 +228,26 @@ test("palette assignment is stable, missing-only, collision-safe, and immutable"
     "too large",
   );
   expect(JSON.stringify(fullSaved)).toBe(fullBefore);
+});
+
+test("new project assignment uses the supplied random source without changing saved colours", () => {
+  const samples = [0, 0.999];
+  let index = 0;
+  const colors = projectIdentity_assignMissingAccents(
+    { saved: "#123456" },
+    [workspace("saved"), workspace("fresh-a"), workspace("fresh-b")],
+    () => samples[index++] ?? 0,
+  );
+
+  expect(colors.saved).toBe("#123456");
+  expect(colors["fresh-a"]).toBe(projectIdentity_presetColors[0]);
+  expect(colors["fresh-b"]).toBe(projectIdentity_presetColors.at(-1));
+  expect(new Set(Object.values(colors)).size).toBe(3);
+});
+
+test("project accent ink chooses a readable black or white foreground", () => {
+  expect(projectIdentity_accentInk("#ffffff")).toBe("#111318");
+  expect(projectIdentity_accentInk("#000000")).toBe("#ffffff");
 });
 
 test("fixed-step generated fallback matches the historical collision oracle", () => {

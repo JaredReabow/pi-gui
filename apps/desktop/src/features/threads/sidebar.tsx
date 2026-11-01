@@ -43,6 +43,13 @@ import {
   type FolderPreference,
 } from "../../../contracts/sidebar-preferences";
 import {
+  projectIdentity_accentInk,
+  projectIdentity_decodeColor,
+  projectIdentity_fallbackAccent,
+  projectIdentity_presetColors,
+  type ProjectAccentColor,
+} from "../../../contracts/project-identity";
+import {
   ArchiveIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -145,6 +152,29 @@ function sidebarWidthBounds(_sidebar: HTMLElement, shell: HTMLElement): PaneWidt
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 
+const WORKSPACE_ACCENT_OPTIONS = Object.freeze([
+  { id: "blue", label: "Blue", color: projectIdentity_presetColors[0] },
+  { id: "teal", label: "Teal", color: projectIdentity_presetColors[1] },
+  { id: "green", label: "Green", color: projectIdentity_presetColors[2] },
+  { id: "gold", label: "Gold", color: projectIdentity_presetColors[3] },
+  { id: "orange", label: "Orange", color: projectIdentity_presetColors[4] },
+  { id: "rose", label: "Rose", color: projectIdentity_presetColors[5] },
+  { id: "violet", label: "Violet", color: projectIdentity_presetColors[6] },
+  { id: "slate", label: "Slate", color: projectIdentity_presetColors[7] },
+] as const);
+
+type WorkspaceAccentStyle = CSSProperties & {
+  readonly "--workspace-accent": ProjectAccentColor;
+  readonly "--workspace-accent-ink": "#111318" | "#ffffff";
+};
+
+function workspaceAccentStyle(color: ProjectAccentColor): WorkspaceAccentStyle {
+  return {
+    "--workspace-accent": color,
+    "--workspace-accent-ink": projectIdentity_accentInk(color),
+  };
+}
+
 type MarkReadReport =
   { readonly status: "running"; readonly total: number } | MarkReadExecutionResult;
 
@@ -222,6 +252,13 @@ export function Sidebar(props: SidebarProps) {
     }).catch((error: unknown) => {
       console.error("[renderer] setFolderPreference failed", error);
     });
+  };
+  const setWorkspaceAccent = (workspaceId: string, color: ProjectAccentColor) => {
+    void updateSnapshot(setSnapshot, () => api.setProjectAccentColor({ workspaceId, color })).catch(
+      (error: unknown) => {
+        console.error("[renderer] setProjectAccentColor failed", error);
+      },
+    );
   };
   const sidebarEntriesByKey = new Map(
     threadSidebarModel.recencyOrder.map((entry) => [sessionThreadKey(entry), entry]),
@@ -539,7 +576,12 @@ export function Sidebar(props: SidebarProps) {
           : "";
 
   return (
-    <aside className="sidebar" id="primary-sidebar" style={sidebarWidthStyle}>
+    <aside
+      className="sidebar"
+      id="primary-sidebar"
+      data-testid="sidebar-surface"
+      style={sidebarWidthStyle}
+    >
       <PaneResizeHandle
         className="sidebar__resize-handle"
         label="Sidebar width"
@@ -716,9 +758,13 @@ export function Sidebar(props: SidebarProps) {
                         toggleHistoryExpanded(workspaceHistoryExpansionKey(group.workspace.id))
                       }
                       folderPreference={folderPreference(group.workspace.id)}
+                      workspaceAccent={threadSidebarModel.accentColors[group.workspace.id]}
                       revealKeys={revealKeys}
                       onSetFolderPreference={(preference) =>
                         setSavedFolderPreference(group.workspace.id, preference)
+                      }
+                      onSetWorkspaceAccent={(color) =>
+                        setWorkspaceAccent(group.workspace.id, color)
                       }
                       canDrag={canDrag}
                       selectedWorkspace={selectedWorkspace}
@@ -750,9 +796,13 @@ export function Sidebar(props: SidebarProps) {
                         toggleHistoryExpanded(workspaceHistoryExpansionKey(group.workspace.id))
                       }
                       folderPreference={folderPreference(group.workspace.id)}
+                      workspaceAccent={threadSidebarModel.accentColors[group.workspace.id]}
                       revealKeys={revealKeys}
                       onSetFolderPreference={(preference) =>
                         setSavedFolderPreference(group.workspace.id, preference)
+                      }
+                      onSetWorkspaceAccent={(color) =>
+                        setWorkspaceAccent(group.workspace.id, color)
                       }
                       canDrag={false}
                       selectedWorkspace={selectedWorkspace}
@@ -859,8 +909,10 @@ interface WorkspaceFolderProps {
   readonly historyExpanded?: boolean;
   readonly onToggleHistory?: () => void;
   readonly folderPreference?: FolderPreference;
+  readonly workspaceAccent?: ProjectAccentColor;
   readonly revealKeys?: ReadonlySet<string>;
   readonly onSetFolderPreference?: (preference: FolderPreference) => void;
+  readonly onSetWorkspaceAccent?: (color: ProjectAccentColor) => void;
   readonly canDrag: boolean;
   readonly selectedWorkspace: WorkspaceRecord | undefined;
   readonly selectedSession?: SessionRecord;
@@ -911,6 +963,55 @@ interface DragHandleProps {
   readonly listeners: DraggableSyntheticListeners;
 }
 
+function WorkspaceAccentPicker({
+  workspaceId,
+  value,
+  onChange,
+}: {
+  readonly workspaceId: string;
+  readonly value: ProjectAccentColor;
+  readonly onChange: (color: ProjectAccentColor) => void;
+}) {
+  const normalized = value || projectIdentity_fallbackAccent(workspaceId);
+  return (
+    <fieldset className="workspace-accent-picker" data-testid="workspace-accent-picker">
+      <legend>Project colour</legend>
+      <div className="workspace-accent-picker__swatches">
+        {WORKSPACE_ACCENT_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className="workspace-accent-picker__swatch"
+            style={
+              {
+                "--swatch-color": option.color,
+                "--swatch-ink": projectIdentity_accentInk(option.color),
+              } as CSSProperties
+            }
+            aria-label={`${option.label} project colour`}
+            aria-pressed={normalized === option.color}
+            data-testid={`workspace-accent-${option.id}`}
+            title={option.label}
+            onClick={() => onChange(option.color)}
+          >
+            {normalized === option.color ? <CheckIcon /> : null}
+          </button>
+        ))}
+      </div>
+      <label className="workspace-accent-picker__custom">
+        <span>Custom</span>
+        <input
+          type="color"
+          data-testid="workspace-accent-custom"
+          aria-label="Custom project colour"
+          value={normalized}
+          onChange={(event) => onChange(projectIdentity_decodeColor(event.currentTarget.value))}
+        />
+      </label>
+    </fieldset>
+  );
+}
+
 function WorkspaceFolderContent(
   props: WorkspaceFolderProps & { readonly dragHandleProps?: DragHandleProps },
 ) {
@@ -920,8 +1021,10 @@ function WorkspaceFolderContent(
     historyExpanded = false,
     onToggleHistory,
     folderPreference = "open",
+    workspaceAccent,
     revealKeys = new Set(),
     onSetFolderPreference,
+    onSetWorkspaceAccent,
     selectedWorkspace,
     selectedSession,
     linkedWorktreeByWorkspaceId,
@@ -951,10 +1054,15 @@ function WorkspaceFolderContent(
   const workspaceActive =
     workspace.id === selectedWorkspace?.id || workspace.id === selectedWorkspace?.rootWorkspaceId;
   const linkedWorktree = linkedWorktreeByWorkspaceId.get(workspace.id);
+  const accentColor = workspaceAccent ?? projectIdentity_fallbackAccent(workspace.id);
 
   return (
     <>
-      <div className={`workspace-row ${workspaceActive ? "workspace-row--active" : ""}`}>
+      <div
+        className={`workspace-row ${workspaceActive ? "workspace-row--active" : ""}`}
+        data-workspace-accent={accentColor}
+        style={workspaceAccentStyle(accentColor)}
+      >
         <button
           className={`workspace-row__select ${dragHandleProps ? "workspace-row__select--draggable" : ""}`}
           onClick={() => {
@@ -1020,6 +1128,7 @@ function WorkspaceFolderContent(
               aria-haspopup="menu"
               className="icon-button workspace-row__menu-button"
               aria-expanded={wsMenu.workspaceMenuId === workspace.id}
+              data-testid="workspace-menu-trigger"
               type="button"
               onClick={(event) => {
                 event.preventDefault();
@@ -1031,6 +1140,13 @@ function WorkspaceFolderContent(
             </button>
             {wsMenu.workspaceMenuId === workspace.id ? (
               <div className="workspace-menu">
+                {onSetWorkspaceAccent ? (
+                  <WorkspaceAccentPicker
+                    workspaceId={workspace.id}
+                    value={accentColor}
+                    onChange={onSetWorkspaceAccent}
+                  />
+                ) : null}
                 <button
                   className="workspace-menu__item"
                   type="button"
@@ -1894,6 +2010,11 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
     const childDuration = sidebarOrder_elapsed(childStartedAt, childEndedAt);
     const childAge = sidebarOrder_creationAge(thread.childCreatedAt);
     const groupedChildren = sidebarPreferences_groupChildren(children);
+    const accentColor = thread.accentColor ?? projectIdentity_fallbackAccent(thread.workspaceId);
+    const rowStyle: WorkspaceAccentStyle = {
+      ...style,
+      ...workspaceAccentStyle(accentColor),
+    };
     const menuOpen =
       !overlay &&
       threadMenu?.openMenu?.surface === "sidebar" &&
@@ -1913,8 +2034,9 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
       <>
         <div
           ref={ref}
-          style={style}
+          style={rowStyle}
           className={classes}
+          data-workspace-accent={accentColor}
           data-sidebar-indicator={indicatorVariant}
           data-session-pinned={pinned ? "true" : "false"}
           data-session-id={thread.session.id}

@@ -1,0 +1,165 @@
+/* Project identity is inherited from the application shell and overridden on
+   each project row so inactive projects retain a quieter version of their hue. */
+.workspace-row {
+  border-color: color-mix(in srgb, var(--workspace-accent) 32%, transparent);
+  background: color-mix(in srgb, var(--workspace-accent) 14%, var(--sidebar));
+}
+
+.workspace-row--active {
+  border-color: var(--workspace-accent);
+  background: var(--workspace-accent);
+  color: var(--workspace-accent-ink);
+}
+
+.workspace-row--active .workspace-row__name,
+.workspace-row--active .workspace-row__icon,
+.workspace-row--active .workspace-row__action-button,
+.workspace-row--active .workspace-row__menu-button {
+  color: var(--workspace-accent-ink);
+}
+
+.workspace-row--active
+  .workspace-row__select:is(:hover, :focus-visible)
+  .workspace-row__icon[data-state="collapsed"]
+  .workspace-row__icon-chevron {
+  color: var(--workspace-accent-ink);
+}
+
+.workspace-row__menu-wrap:has(.workspace-menu),
+.workspace-row:has(.workspace-menu) {
+  z-index: 70;
+}
+
+.workspace-accent-picker {
+  min-width: 220px;
+  margin: 0;
+  padding: 9px 11px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-accent-picker legend {
+  padding: 0;
+  color: var(--muted-soft);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-accent-picker__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.workspace-accent-picker__swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--swatch-color);
+  color: var(--swatch-ink);
+  cursor: pointer;
+}
+
+.workspace-accent-picker__swatch[aria-pressed="true"] {
+  border-color: var(--text-strong);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.workspace-accent-picker__swatch svg {
+  width: 13px;
+  height: 13px;
+}
+
+.workspace-accent-picker__custom {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.workspace-accent-picker__custom input {
+  width: 34px;
+  height: 24px;
+  padding: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.session-row {
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--workspace-accent) 11%, var(--sidebar));
+}
+
+.session-row--active {
+  border-color: var(--workspace-accent);
+  background: var(--workspace-accent);
+  color: var(--workspace-accent-ink);
+}
+
+.session-row--active .session-row__title,
+.session-row--active .session-row__context,
+.session-row--active .session-row__time,
+.session-row--active .session-row__child-meta,
+.session-row--active .session-row__workspace-icon,
+.session-row--active .session-row__tree-toggle,
+.session-row--active .icon-button {
+  color: var(--workspace-accent-ink);
+}
+
+.session-row--active .session-row__child-status,
+.session-row--active .session-row__child-count {
+  border-color: color-mix(in srgb, var(--workspace-accent-ink) 25%, transparent);
+  background: color-mix(in srgb, var(--workspace-accent-ink) 12%, transparent);
+}
+
+.timeline-item--user .timeline-item__bubble {
+  border-color: color-mix(in srgb, var(--workspace-accent) 72%, #000000);
+  background: var(--workspace-accent);
+  color: var(--workspace-accent-ink);
+}
+
+.timeline-item--user .timeline-item__bubble .message__content {
+  color: inherit;
+}
+
+.timeline-item--user .timeline-item__bubble .message__content a,
+.timeline-item--user .timeline-item__bubble .message__file-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.timeline-item--user .timeline-item__bubble .message__content blockquote {
+  border-left-color: color-mix(in srgb, var(--workspace-accent-ink) 45%, transparent);
+  color: inherit;
+}
+
+.timeline-item--user .timeline-item__bubble .message__content :not(pre) > code,
+.timeline-item--user .timeline-item__bubble .timeline-item__attachment {
+  border: 1px solid color-mix(in srgb, var(--workspace-accent-ink) 24%, transparent);
+  background: color-mix(in srgb, var(--workspace-accent-ink) 12%, transparent);
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-row,
+  .session-row,
+  .timeline-item--user .timeline-item__bubble {
+    transition:
+      background-color var(--motion-fast) var(--ease-out),
+      border-color var(--motion-fast) var(--ease-out),
+      color var(--motion-fast) var(--ease-out);
+  }
+}

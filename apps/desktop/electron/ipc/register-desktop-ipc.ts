@@ -3,6 +3,7 @@ import {
   sidebarPreferences_decodeSort,
   sidebarPreferences_decodeMarkRead,
 } from "../../contracts/sidebar-preferences";
+import { projectIdentity_decodeSetAccent } from "../../contracts/project-identity";
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import type { SessionRef } from "@pi-gui/session-driver";
@@ -93,6 +94,7 @@ type StateOwner = Pick<
   | "setSidebarCollapsed"
   | "setFolderPreference"
   | "setAllThreadsSort"
+  | "setProjectAccentColor"
   | "getEffectiveChildModelSettings"
   | "setThreadGrouping"
   | "setWorkspaceCollapsed"
@@ -312,6 +314,11 @@ export function registerDesktopIpc({
   );
   handleMainFrame(desktopIpc.setAllThreadsSort, sidebarPreferences_decodeSort, (sort, { event }) =>
     immediate(event, () => owners.state.setAllThreadsSort(sort)),
+  );
+  handleMainFrame(
+    desktopIpc.setProjectAccentColor,
+    projectIdentity_decodeSetAccent,
+    (input, { event }) => immediate(event, () => owners.state.setProjectAccentColor(input)),
   );
   handleMainFrame(
     desktopIpc.setFolderPreference,

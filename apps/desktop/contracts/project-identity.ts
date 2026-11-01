@@ -214,14 +214,73 @@ function projectIdentity_hash(value: string): number {
 }
 
 function projectIdentity_generatedColor(hash: number): ProjectAccentColor {
-  let value = hash & 0xffffff;
+  const value = hash & 0xffffff;
   return `#${value.toString(16).padStart(6, "0")}`;
 }
 
-/** Add defaults only for owners that have no saved assignment. */
+/** Return a stable display fallback for old or incomplete state snapshots. */
+export function projectIdentity_fallbackAccent(projectId: string): ProjectAccentColor {
+  const normalized = projectIdentity_workspaceId(projectId, "project id");
+  const color =
+    projectIdentity_presetColors[
+      projectIdentity_hash(normalized) % projectIdentity_presetColors.length
+    ];
+  if (!color) {
+    throw new Error("Missing project preset");
+  }
+  return color;
+}
+
+/** Choose black or white text with the higher WCAG contrast against a project colour. */
+export function projectIdentity_accentInk(color: ProjectAccentColor): "#111318" | "#ffffff" {
+  const normalized = projectIdentity_decodeColor(color);
+  const red = Number.parseInt(normalized.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(normalized.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(normalized.slice(5, 7), 16) / 255;
+  const linear = (channel: number) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  const luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+  return luminance > 0.179 ? "#111318" : "#ffffff";
+}
+
+function projectIdentity_randomColor(
+  random: () => number,
+  used: ReadonlySet<string>,
+  fallbackHash: number,
+): ProjectAccentColor {
+  const available = projectIdentity_presetColors.filter((candidate) => !used.has(candidate));
+  if (available.length > 0) {
+    const sample = random();
+    if (!Number.isFinite(sample) || sample < 0 || sample >= 1) {
+      throw new Error("Project colour random source must return [0, 1)");
+    }
+    const selected = available[Math.floor(sample * available.length)];
+    if (selected) return selected;
+    throw new Error("Missing available project preset");
+  }
+
+  let candidate = fallbackHash & 0xffffff;
+  for (let attempt = 0; attempt < 256; attempt += 1) {
+    const sample = random();
+    if (!Number.isFinite(sample) || sample < 0 || sample >= 1) {
+      throw new Error("Project colour random source must return [0, 1)");
+    }
+    candidate = (Math.floor(sample * 0x1000000) + attempt * 0x9e3779) & 0xffffff;
+    const color: ProjectAccentColor = `#${candidate.toString(16).padStart(6, "0")}`;
+    if (!used.has(color)) return color;
+  }
+  throw new Error("Unable to choose a unique project colour");
+}
+
+/**
+ * Add defaults only for owners that have no saved assignment. Supplying a
+ * random source makes new-project assignment random while callers that omit it
+ * retain the historical deterministic projection used by compatibility tests.
+ */
 export function projectIdentity_assignMissingAccents(
   saved: Readonly<Record<string, ProjectAccentColor>>,
   workspaces: readonly ProjectIdentityWorkspace[],
+  random?: () => number,
 ): Readonly<Record<string, ProjectAccentColor>> {
   const decodedSaved = projectIdentity_decodeAccentColors(saved);
   const decodedWorkspaces = projectIdentity_decodeWorkspaces(workspaces);
@@ -249,27 +308,38 @@ export function projectIdentity_assignMissingAccents(
   const used = new Set<string>(Object.values(decodedSaved));
   for (const owner of missing) {
     const hash = projectIdentity_hash(owner);
-    const presetIndex = hash % projectIdentity_presetColors.length;
-    let color: ProjectAccentColor | undefined = projectIdentity_presetColors[presetIndex];
-    if (!color) {
-      throw new Error("Missing project preset");
-    }
-    if (used.has(color)) {
-      color =
-        projectIdentity_presetColors.find((candidate) => !used.has(candidate)) ??
-        projectIdentity_generatedColor(hash);
-      if (used.has(color)) {
-        let candidate = hash & 0xffffff;
-        do {
-          candidate = (candidate + 0x9e3779) & 0xffffff;
-          color = `#${candidate.toString(16).padStart(6, "0")}`;
-        } while (used.has(color));
-      }
-    }
+    const color =
+      random === undefined
+        ? projectIdentity_deterministicColor(hash, used)
+        : projectIdentity_randomColor(random, used, hash);
     next[owner] = color;
     used.add(color);
   }
   return Object.freeze(next);
+}
+
+function projectIdentity_deterministicColor(
+  hash: number,
+  used: ReadonlySet<string>,
+): ProjectAccentColor {
+  const presetIndex = hash % projectIdentity_presetColors.length;
+  let color: ProjectAccentColor | undefined = projectIdentity_presetColors[presetIndex];
+  if (!color) {
+    throw new Error("Missing project preset");
+  }
+  if (used.has(color)) {
+    color =
+      projectIdentity_presetColors.find((candidate) => !used.has(candidate)) ??
+      projectIdentity_generatedColor(hash);
+    if (used.has(color)) {
+      let candidate = hash & 0xffffff;
+      do {
+        candidate = (candidate + 0x9e3779) & 0xffffff;
+        color = `#${candidate.toString(16).padStart(6, "0")}`;
+      } while (used.has(color));
+    }
+  }
+  return color;
 }
 
 /** Project saved owner assignments onto every current primary and linked workspace. */

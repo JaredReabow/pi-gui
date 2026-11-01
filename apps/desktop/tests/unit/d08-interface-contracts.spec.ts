@@ -218,6 +218,7 @@ test("new IPC capabilities use the main-frame boundary with decoders", async () 
     "markAllThreadsRead",
     "setFolderPreference",
     "setAllThreadsSort",
+    "setProjectAccentColor",
     "getEffectiveChildModelSettings",
   ]) {
     expect(source).toMatch(new RegExp(`handleMainFrame\\(\\s*desktopIpc\\.${channel},`));
@@ -292,7 +293,7 @@ test("the public mark-read limit remains the exact authoritative backend bound",
   ).toThrow();
 });
 
-test("stage 2 retains persisted appearance privately without consumer adoption", async () => {
+test("project appearance is projected into the renderer while persisted state stays private", async () => {
   const source = await readFile(join(__dirname, "../../electron/application/app-store.ts"), "utf8");
   expect(source).toContain(
     "private workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>>",
@@ -302,7 +303,7 @@ test("stage 2 retains persisted appearance privately without consumer adoption",
   );
   expect(source).toContain("workspaceAccentColors:");
   expect(source).toContain("activityIndicatorPreference: this.activityIndicatorPreference");
-  expect(source).not.toMatch(
-    /sidebarAppearance\s*:|projectByWorkspaceId\s*:|WorkspaceRecord[^\n]*accent/i,
-  );
+  expect(source).toContain("sidebarAppearance,");
+  expect(source).toContain("projectByWorkspaceId,");
+  expect(source).not.toMatch(/WorkspaceRecord[^\n]*accent/i);
 });

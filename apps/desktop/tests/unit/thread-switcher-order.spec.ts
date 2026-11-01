@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { SessionRecord } from "../../contracts/desktop-state";
+import { projectIdentity_presetColors } from "../../contracts/project-identity";
 import type { ThreadListEntry } from "../../src/features/threads/thread-groups";
 import {
   orderThreadSwitcherEntries,
@@ -20,6 +21,7 @@ function entry(workspaceId: string, sessionId: string): ThreadListEntry {
     folderId: workspaceId,
     workspaceId,
     session,
+    accentColor: projectIdentity_presetColors[0]!,
     environment: { kind: "local", label: "Local" },
     contextLabel: workspaceId,
   };
