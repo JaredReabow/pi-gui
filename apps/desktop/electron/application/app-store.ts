@@ -117,6 +117,7 @@ import type { RefreshStateOptions } from "./refresh-state-options";
 import {
   readPersistedUiState,
   type LegacyPersistedUiState,
+  type LegacySessionOrigin,
   type PersistedUiState,
   writePersistedUiState,
 } from "../persistence/app-store-persistence";
@@ -308,6 +309,17 @@ export class DesktopAppStore {
   >();
   private workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>> = Object.freeze({});
   private activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined;
+  /**
+   * Explicitly validated preferences from the installed 1.0.14 repair build.
+   * They are retained as opaque settings until their owning features are
+   * migrated; no permission behavior is inferred from them here.
+   */
+  private preventSleep: boolean | undefined;
+  private allowCrossProjectThreadCommands: boolean | undefined;
+  /** The repair build stored source parentage only in this legacy origin map. */
+  private legacySessionOrigins: Readonly<Record<string, LegacySessionOrigin>> | undefined;
+  /** Prevent repeated immutable snapshots after the first successful import. */
+  private legacyRepairUiStateImported: true | undefined;
   private readonly pendingRuntimeCommandsBySession = new Map<
     string,
     PendingRuntimeCommandExecution
@@ -2450,6 +2462,17 @@ export class DesktopAppStore {
   private restorePersistedUiState(persisted: LegacyPersistedUiState): void {
     this.workspaceAccentColors = persisted.workspaceAccentColors ?? Object.freeze({});
     this.activityIndicatorPreference = persisted.activityIndicatorPreference;
+    this.preventSleep = persisted.preventSleep;
+    this.allowCrossProjectThreadCommands = persisted.allowCrossProjectThreadCommands;
+    this.legacySessionOrigins = persisted.sessionOrigins;
+    this.legacyRepairUiStateImported =
+      persisted.legacyRepairUiStateImported ??
+      (persisted.preventSleep !== undefined ||
+      persisted.allowCrossProjectThreadCommands !== undefined ||
+      persisted.lastHumanInputAtBySession !== undefined ||
+      persisted.sessionOrigins !== undefined
+        ? true
+        : undefined);
     this.sessionState.initiatingOriginBySession.clear();
     for (const [key, origin] of Object.entries(persisted.initiatingOriginBySession ?? {}))
       this.sessionState.initiatingOriginBySession.set(key, origin);
@@ -4483,6 +4506,10 @@ export class DesktopAppStore {
       workspaceAccentColors:
         Object.keys(workspaceAccentColors).length > 0 ? workspaceAccentColors : undefined,
       activityIndicatorPreference: activityIndicatorPreference,
+      preventSleep: this.preventSleep,
+      allowCrossProjectThreadCommands: this.allowCrossProjectThreadCommands,
+      sessionOrigins: this.legacySessionOrigins,
+      legacyRepairUiStateImported: this.legacyRepairUiStateImported,
     };
   }
 

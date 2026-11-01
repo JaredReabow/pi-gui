@@ -47,3 +47,6 @@
 - Added backward-compatible import for the installed 1.0.14 UI state, including legacy
   activity timestamps, child origins, orchestration model metadata, and runtime preference
   fields, so upgrading retains the existing project and thread list.
+- Preserved the validated legacy fields and child parentage across later autosaves, and
+  retained one immutable pre-migration snapshot even though the repair build already used
+  UI-state version 20.

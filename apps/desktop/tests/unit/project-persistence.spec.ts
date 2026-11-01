@@ -105,13 +105,29 @@ test("actual Main retains appearance state across unrelated full saves and reloa
           }],
         };
         const sessionCatalog = {
-          sessions: [{
-            sessionRef: { workspaceId: "present-root", sessionId: "session" },
-            workspaceId: "present-root",
-            title: "Retained session",
-            updatedAt: "2026-10-31T00:00:00Z",
-            status: "idle",
-          }],
+          sessions: [
+            {
+              sessionRef: { workspaceId: "present-root", sessionId: "session" },
+              workspaceId: "present-root",
+              title: "Retained session",
+              updatedAt: "2026-10-31T00:00:00Z",
+              status: "idle",
+            },
+            {
+              sessionRef: { workspaceId: "present-root", sessionId: "legacy-activity" },
+              workspaceId: "present-root",
+              title: "Legacy activity session",
+              updatedAt: "2026-10-31T00:02:00Z",
+              status: "idle",
+            },
+            {
+              sessionRef: { workspaceId: "present-root", sessionId: "legacy-child" },
+              workspaceId: "present-root",
+              title: "Legacy child session",
+              updatedAt: "2026-10-31T00:02:30Z",
+              status: "idle",
+            },
+          ],
         };
         const configureMain = (store) => {
           store.driver.listWorkspaces = async () => workspaceCatalog;
@@ -346,6 +362,85 @@ test("actual Main retains appearance state across unrelated full saves and reloa
           v19Seed.initialBytes,
         );
 
+        const legacyOrigin = {
+          "present-root:legacy-child": {
+            kind: "subagent",
+            parentWorkspaceId: "present-root",
+            parentSessionId: "parent-existing-only-in-session-origins",
+          },
+        };
+        const installedRepairSeed = await seed("installed-repair-v20", {
+          version: 20,
+          ...existing,
+          preventSleep: true,
+          allowCrossProjectThreadCommands: false,
+          lastHumanInputAtBySession: {
+            "present-root:legacy-activity": "2026-10-31T00:03:00Z",
+          },
+          sessionOrigins: legacyOrigin,
+        });
+        resetWrites();
+        const installedRepair = configureMain(new DesktopAppStore({
+          userDataDir: installedRepairSeed.dir,
+          initialWorkspacePaths: [],
+        }));
+        await installedRepair.initialize();
+        assert.equal(installedRepair.persistenceReadiness, "ready");
+        assert.ok(control.writes.length > 0);
+        const repairSnapshotNames = (await readdir(installedRepairSeed.dir)).filter((name) =>
+          name.startsWith("ui-state.pre-repair-v1.0.14."),
+        );
+        assert.equal(repairSnapshotNames.length, 1);
+        const repairSnapshotPath = join(installedRepairSeed.dir, repairSnapshotNames[0]);
+        const repairSnapshotBytes = await readFile(repairSnapshotPath, "utf8");
+        assert.equal(repairSnapshotBytes, installedRepairSeed.initialBytes);
+
+        resetWrites();
+        await installedRepair.setAllThreadsSort("created");
+        await installedRepair.setAllThreadsSort("title");
+        assert.equal(
+          (
+            await readdir(installedRepairSeed.dir)
+          ).filter((name) => name.startsWith("ui-state.pre-repair-v1.0.14.")).length,
+          1,
+        );
+        assert.equal(await readFile(repairSnapshotPath, "utf8"), repairSnapshotBytes);
+
+        const installedRepairSaved = JSON.parse(
+          await readFile(installedRepairSeed.path, "utf8"),
+        );
+        assert.equal(installedRepairSaved.preventSleep, true);
+        assert.equal(installedRepairSaved.allowCrossProjectThreadCommands, false);
+        same(installedRepairSaved.sessionOrigins, legacyOrigin);
+        assert.equal(
+          installedRepairSaved.lastInteractedAtBySession["present-root:legacy-activity"],
+          "2026-10-31T00:03:00Z",
+        );
+        same(installedRepairSaved.initiatingOriginBySession["present-root:legacy-child"], {
+          kind: "tool",
+          source: "desktop-host",
+        });
+        assert.equal(installedRepairSaved.legacyRepairUiStateImported, true);
+
+        resetWrites();
+        const installedRepairReload = configureMain(new DesktopAppStore({
+          userDataDir: installedRepairSeed.dir,
+          initialWorkspacePaths: [],
+        }));
+        await installedRepairReload.initialize();
+        assert.equal(installedRepairReload.persistenceReadiness, "ready");
+        const installedRepairReloaded = JSON.parse(
+          await readFile(installedRepairSeed.path, "utf8"),
+        );
+        assert.equal(installedRepairReloaded.preventSleep, true);
+        assert.equal(installedRepairReloaded.allowCrossProjectThreadCommands, false);
+        same(installedRepairReloaded.sessionOrigins, legacyOrigin);
+        assert.equal(
+          installedRepairReloaded.lastInteractedAtBySession["present-root:legacy-activity"],
+          "2026-10-31T00:03:00Z",
+        );
+        assert.equal(await readFile(repairSnapshotPath, "utf8"), repairSnapshotBytes);
+
         const failedWriteSeed = await seed("failed-write", {
           version: 20,
           ...existing,
@@ -403,6 +498,7 @@ test("actual Main retains appearance state across unrelated full saves and reloa
           existingFieldsPreserved: true,
           failedDecodeBlockedWrite: true,
           v19UpgradeBackupRetained: true,
+          installedRepairMigrationRetained: true,
           syntheticWriteFailurePreservedPrior: true,
           consumerProjectionCommitted: true,
           writeOrder: control.history.map((entry) => ({

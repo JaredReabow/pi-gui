@@ -82,22 +82,24 @@ export interface PersistedUiState {
   readonly orchestrationChildren?: readonly OrchestrationChildThread[];
   readonly workspaceAccentColors?: Readonly<Record<string, ProjectAccentColor>>;
   readonly activityIndicatorPreference?: PersistedActivityIndicatorPreference;
-}
-
-export interface LegacyPersistedUiState extends PersistedUiState {
-  readonly composerAttachmentsBySession?: Record<string, readonly unknown[]>;
-  readonly transcripts?: Record<string, readonly unknown[]>;
   /**
    * Compatibility fields emitted by the installed 1.0.14 repair build.
-   * They are decoded here so upgrading does not reject the entire UI state.
+   * They remain in the private persistence state so unrelated saves do not
+   * discard values or child parentage that this source does not yet own.
    */
   readonly preventSleep?: boolean;
   readonly allowCrossProjectThreadCommands?: boolean;
   readonly lastHumanInputAtBySession?: Record<string, string>;
   readonly sessionOrigins?: Record<string, LegacySessionOrigin>;
+  readonly legacyRepairUiStateImported?: true;
 }
 
-interface LegacySessionOrigin {
+export interface LegacyPersistedUiState extends PersistedUiState {
+  readonly composerAttachmentsBySession?: Record<string, readonly unknown[]>;
+  readonly transcripts?: Record<string, readonly unknown[]>;
+}
+
+export interface LegacySessionOrigin {
   readonly kind: "human" | "scheduled" | "subagent" | "tool";
   readonly parentWorkspaceId?: string;
   readonly parentSessionId?: string;
@@ -200,6 +202,7 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
         : undefined,
     lastHumanInputAtBySession: toStringRecord(candidate.lastHumanInputAtBySession),
     sessionOrigins: toLegacySessionOrigins(candidate.sessionOrigins),
+    legacyRepairUiStateImported: candidate.legacyRepairUiStateImported === true ? true : undefined,
     composerAttachmentsBySession: toObjectArrayRecord(candidate.composerAttachmentsBySession),
     transcripts: toObjectArrayRecord(candidate.transcripts),
   };
@@ -221,13 +224,30 @@ export async function writePersistedUiState(
   await writeFileAtomicQueued(uiStateFilePath, serialized, decodePersistedUiState, {
     preserveExistingAs: (validated) => {
       const existing = validated as LegacyPersistedUiState;
-      if (existing.version === 20) return undefined;
+      if (existing.version === 20) {
+        if (!requiresInstalledRepairMigrationSnapshot(existing)) return undefined;
+        return join(
+          dirname(uiStateFilePath),
+          `${basename(uiStateFilePath, ".json")}.pre-repair-v1.0.14.${randomUUID()}.json`,
+        );
+      }
       return join(
         dirname(uiStateFilePath),
         `${basename(uiStateFilePath, ".json")}.pre-workbench-v${existing.version ?? "legacy"}.${randomUUID()}.json`,
       );
     },
   });
+}
+
+/** Detect the exact repair-build shape once, even though it already used version 20. */
+function requiresInstalledRepairMigrationSnapshot(existing: LegacyPersistedUiState): boolean {
+  return (
+    existing.legacyRepairUiStateImported !== true &&
+    (existing.preventSleep !== undefined ||
+      existing.allowCrossProjectThreadCommands !== undefined ||
+      existing.lastHumanInputAtBySession !== undefined ||
+      existing.sessionOrigins !== undefined)
+  );
 }
 
 /** Atomic JSON persistence entry point for other app-owned private stores. */
@@ -326,6 +346,7 @@ function validateUiState(value: unknown): Record<string, unknown> {
       "orchestrationChildren",
       "workspaceAccentColors",
       "activityIndicatorPreference",
+      "legacyRepairUiStateImported",
       "composerAttachmentsBySession",
       "transcripts",
     ],
@@ -380,6 +401,7 @@ function validateUiState(value: unknown): Record<string, unknown> {
     "allowMultiple",
     "allowCrossProjectThreadCommands",
     "enableTransparency",
+    "legacyRepairUiStateImported",
     "preventSleep",
   ])
     optional(root, key, boolean);
