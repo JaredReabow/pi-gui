@@ -54,6 +54,7 @@ export interface ScheduledTaskOwnerHost {
   workspaces(): DesktopAppState["workspaces"];
   workspaceRefFromState(workspaceId: string): WorkspaceRef | undefined;
   sessionFromState(sessionRef: SessionRef): SessionRecord | undefined;
+  hasQueuedComposerMessages(sessionRef: SessionRef): boolean;
   createForegroundSession(input: CreateSessionInput): Promise<DesktopAppState>;
   seedSession(snapshot: SessionSnapshot): void;
   ensureSessionSubscription(sessionRef: SessionRef): Promise<void>;
@@ -85,6 +86,24 @@ const inFlightTaskIds = new Set<string>();
 export function isScheduledTaskInFlight(taskId: string): boolean {
   return inFlightTaskIds.has(taskId);
 }
+
+/**
+ * Existing-thread tasks wait for the target's current queue to drain. This
+ * prevents repeated chronological triggers from stacking behind one turn.
+ */
+export function scheduledTaskTargetWaitsForQueuedMessage(
+  task: ScheduledTaskRecord,
+  hasQueuedComposerMessages: (sessionRef: SessionRef) => boolean,
+): boolean {
+  return (
+    task.target.kind === "existing-thread" &&
+    hasQueuedComposerMessages({
+      workspaceId: task.target.workspaceId,
+      sessionId: task.target.sessionId,
+    })
+  );
+}
+
 let mutationTail: Promise<void> = Promise.resolve();
 
 function enqueueMutation<T>(work: () => Promise<T>): Promise<T> {
@@ -550,12 +569,17 @@ async function claimDueScheduledTasks(
     await replaceAndPersist(store, leftover, false);
   }
 
-  const due = leftover.filter((task) => isDue(task, now));
+  const due = leftover.filter(
+    (task) =>
+      isDue(task, now) &&
+      !scheduledTaskTargetWaitsForQueuedMessage(task, store.hasQueuedComposerMessages),
+  );
   if (due.length === 0) {
     return undefined;
   }
 
   const claims: ClaimedScheduledRun[] = [];
+  const claimedExistingThreads = new Set<string>();
   try {
     for (const dueTask of due) {
       const claimed = store.scheduledTasks().find((task) => task.id === dueTask.id);
@@ -590,10 +614,18 @@ async function claimDueScheduledTasks(
             workspaceId: claimed.target.workspaceId,
             sessionId: claimed.target.sessionId,
           };
+          const targetKey = `${sessionRef.workspaceId}\0${sessionRef.sessionId}`;
+          if (
+            claimedExistingThreads.has(targetKey) ||
+            store.hasQueuedComposerMessages(sessionRef)
+          ) {
+            continue;
+          }
           const session = store.sessionFromState(sessionRef);
           if (!session || session.archivedAt) {
             throw new Error("Scheduled task target thread is missing or archived.");
           }
+          claimedExistingThreads.add(targetKey);
         }
       } catch (error) {
         await writeTask(store, failedRunTask(store, claimed, sessionRef, firedAt, now, error));

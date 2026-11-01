@@ -9,6 +9,7 @@ import type {
   ThemePresetId,
   WorkspaceRecord,
 } from "../../../contracts/desktop-state";
+import type { ActivityIndicatorStyle } from "../../../contracts/sidebar-preferences";
 import type {
   CustomProviderConfig,
   DesktopNotificationPermissionStatus,
@@ -39,6 +40,7 @@ interface SettingsViewProps {
   readonly notificationPermissionPending: boolean;
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly integratedTerminalShell: string;
+  readonly activityIndicatorStyle: ActivityIndicatorStyle;
   readonly themeMode: "system" | "light" | "dark";
   readonly themePresetId: ThemePresetId;
   readonly enableTransparency: boolean;
@@ -57,6 +59,7 @@ interface SettingsViewProps {
   readonly onDeleteCustomProvider: (providerId: string) => Promise<string | undefined>;
   readonly onSetNotificationPreferences: (preferences: Partial<NotificationPreferences>) => void;
   readonly onSetIntegratedTerminalShell: (shellPath: string) => void;
+  readonly onSetActivityIndicatorStyle: (style: ActivityIndicatorStyle) => void;
   readonly onRequestNotificationPermission: () => void;
   readonly onOpenSystemNotificationSettings: () => void;
   readonly onSetThemeMode: (mode: "system" | "light" | "dark") => void;
@@ -77,6 +80,7 @@ export function SettingsView({
   notificationPermissionPending,
   modelSettingsScopeMode,
   integratedTerminalShell,
+  activityIndicatorStyle,
   themeMode,
   themePresetId,
   enableTransparency,
@@ -93,6 +97,7 @@ export function SettingsView({
   onDeleteCustomProvider,
   onSetNotificationPreferences,
   onSetIntegratedTerminalShell,
+  onSetActivityIndicatorStyle,
   onRequestNotificationPermission,
   onOpenSystemNotificationSettings,
   onSetThemeMode,
@@ -158,9 +163,11 @@ export function SettingsView({
               runtime={runtime}
               modelSettingsScopeMode={modelSettingsScopeMode}
               integratedTerminalShell={integratedTerminalShell}
+              activityIndicatorStyle={activityIndicatorStyle}
               onSetModelSettingsScopeMode={onSetModelSettingsScopeMode}
               onSetIntegratedTerminalShell={onSetIntegratedTerminalShell}
               onToggleSkillCommands={onToggleSkillCommands}
+              onSetActivityIndicatorStyle={onSetActivityIndicatorStyle}
             />
           ) : null}
 

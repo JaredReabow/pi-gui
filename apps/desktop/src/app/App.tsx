@@ -102,6 +102,7 @@ import {
   projectIdentity_fallbackAccent,
   type ProjectAccentColor,
 } from "../../contracts/project-identity";
+import { sidebarPreferences_defaultActivityStyle } from "../../contracts/sidebar-preferences";
 
 type WorkspaceAccentStyle = CSSProperties & {
   readonly "--workspace-accent": ProjectAccentColor;
@@ -312,6 +313,9 @@ export default function App() {
   const isTranscriptLoading =
     Boolean(selectedSession) && !selectedTranscriptForSession && !transcriptFailed;
   const selectedSessionRunning = selectedSession?.status === "running";
+  const activityIndicatorStyle =
+    snapshot?.sidebarAppearance?.activityIndicatorPreference.style ??
+    sidebarPreferences_defaultActivityStyle;
   const turnChanges = useTurnChanges({
     api,
     target: workbenchTarget,
@@ -1007,6 +1011,7 @@ export default function App() {
           selectedWorkspace={selectedWorkspace}
           selectedSession={selectedSession}
           visibleWorkspaces={visibleWorkspaces}
+          activityIndicatorStyle={activityIndicatorStyle}
           threadSidebarModel={threadSidebarModel ?? buildThreadSidebarModel(snapshot)}
           threadShortcutOrderRef={threadShortcutOrderRef}
           threadGrouping={snapshot.threadGrouping}

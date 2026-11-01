@@ -183,6 +183,7 @@ import {
 import {
   createScheduledTaskOwner,
   isScheduledTaskInFlight,
+  scheduledTaskTargetWaitsForQueuedMessage,
   type ScheduledTaskOwner,
 } from "../scheduled-tasks/app-store-scheduled-tasks";
 import { earliestScheduledWakeAt } from "../scheduled-tasks/scheduled-task-schedule";
@@ -627,6 +628,8 @@ export class DesktopAppStore {
       workspaces: () => this.state.workspaces,
       workspaceRefFromState: (workspaceId) => this.workspaceRefFromState(workspaceId),
       sessionFromState: (sessionRef) => this.sessionFromState(sessionRef),
+      hasQueuedComposerMessages: (sessionRef) =>
+        this.getQueuedComposerMessages(sessionRef).length > 0,
       createForegroundSession: (input) => this.workspaceOwner.createSession(input),
       seedSession: (snapshot) => {
         const key = sessionKey(snapshot.ref);
@@ -961,7 +964,14 @@ export class DesktopAppStore {
     }
     // A task whose run is still in flight re-arms the timer when that run settles.
     const nextRunAt = earliestScheduledWakeAt(
-      this.state.scheduledTasks.filter((task) => !isScheduledTaskInFlight(task.id)),
+      this.state.scheduledTasks.filter(
+        (task) =>
+          !isScheduledTaskInFlight(task.id) &&
+          !scheduledTaskTargetWaitsForQueuedMessage(
+            task,
+            (sessionRef) => this.getQueuedComposerMessages(sessionRef).length > 0,
+          ),
+      ),
     );
     if (nextRunAt && nextRunAt === this.scheduledTaskWakeAt && this.scheduledTaskTimer) {
       return;
@@ -5161,6 +5171,8 @@ export class DesktopAppStore {
     queuedMessages: readonly SessionQueuedMessage[] | undefined,
   ): void {
     const key = sessionKey(sessionRef);
+    const hadQueuedMessages =
+      (this.sessionState.queuedComposerMessagesBySession.get(key)?.length ?? 0) > 0;
     const next = mergeQueuedComposerMessages(
       this.sessionState.queuedComposerMessagesBySession.get(key),
       queuedMessages,
@@ -5174,6 +5186,9 @@ export class DesktopAppStore {
     const editState = this.sessionState.queuedComposerEditsBySession.get(key);
     if (editState && !next.some((message) => message.id === editState.messageId)) {
       this.sessionState.queuedComposerEditsBySession.delete(key);
+    }
+    if (hadQueuedMessages && next.length === 0) {
+      this.scheduleScheduledTasks();
     }
   }
 

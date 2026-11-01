@@ -39,6 +39,8 @@ import type {
 } from "../../../contracts/desktop-state";
 import {
   sidebarPreferences_markReadLimit,
+  sidebarPreferences_defaultActivityStyle,
+  type ActivityIndicatorStyle,
   type AllThreadsSort,
   type FolderPreference,
 } from "../../../contracts/sidebar-preferences";
@@ -72,8 +74,10 @@ import {
 } from "../../../contracts/ipc";
 import { PaneResizeHandle, type PaneWidthBounds } from "../../ui/pane-resize-handle";
 import { usePersistedPaneWidth } from "../../ui/use-persisted-pane-width";
+import { ActivityIndicator } from "../../ui/activity-indicator";
 import type { WorkspaceMenuState } from "./hooks/use-workspace-menu";
 import type { ThreadMenuState } from "./hooks/use-thread-actions";
+import { ProjectAccentBridge } from "./project-accent-bridge";
 import { archiveThreadShortcut, ThreadActionsMenu } from "./thread-actions";
 import {
   recencyHistoryExpansionKey,
@@ -114,6 +118,7 @@ interface SidebarProps {
   readonly selectedWorkspace: WorkspaceRecord | undefined;
   readonly selectedSession: SessionRecord | undefined;
   readonly visibleWorkspaces: readonly WorkspaceRecord[];
+  readonly activityIndicatorStyle?: ActivityIndicatorStyle;
   readonly threadSidebarModel: ThreadSidebarModel;
   readonly threadGrouping: ThreadGrouping;
   readonly collapsedWorkspaceIds: readonly string[];
@@ -199,6 +204,7 @@ export function Sidebar(props: SidebarProps) {
     selectedWorkspace,
     selectedSession,
     visibleWorkspaces,
+    activityIndicatorStyle = sidebarPreferences_defaultActivityStyle,
     threadSidebarModel,
     threadGrouping,
     collapsedWorkspaceIds,
@@ -1063,6 +1069,7 @@ function WorkspaceFolderContent(
         data-workspace-accent={accentColor}
         style={workspaceAccentStyle(accentColor)}
       >
+        <ProjectAccentBridge active={workspaceActive} color={accentColor} />
         <button
           className={`workspace-row__select ${dragHandleProps ? "workspace-row__select--draggable" : ""}`}
           onClick={() => {
@@ -2011,6 +2018,11 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
     const childAge = sidebarOrder_creationAge(thread.childCreatedAt);
     const groupedChildren = sidebarPreferences_groupChildren(children);
     const accentColor = thread.accentColor ?? projectIdentity_fallbackAccent(thread.workspaceId);
+    const threadOrigin = !thread.parentKey
+      ? "human"
+      : thread.childOriginGroup === "tool"
+        ? "agent"
+        : (thread.childOriginGroup ?? "unknown");
     const rowStyle: WorkspaceAccentStyle = {
       ...style,
       ...workspaceAccentStyle(accentColor),
@@ -2038,6 +2050,7 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
           className={classes}
           data-workspace-accent={accentColor}
           data-sidebar-indicator={indicatorVariant}
+          data-thread-origin={threadOrigin}
           data-session-pinned={pinned ? "true" : "false"}
           data-session-id={thread.session.id}
           data-session-created-at={thread.session.createdAt ?? "unknown"}
@@ -2091,7 +2104,12 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
           >
             <span className="session-row__leading" aria-hidden="true">
               {indicatorVariant === "running" ? (
-                <span className="session-row__status session-row__status--running" />
+                <ActivityIndicator
+                  className="session-row__status session-row__status--running"
+                  style={
+                    tree?.props.activityIndicatorStyle ?? sidebarPreferences_defaultActivityStyle
+                  }
+                />
               ) : null}
               {indicatorVariant === "failed" ? (
                 <span className="session-row__status session-row__status--failed" />

@@ -239,7 +239,6 @@ async function expectSameDesign(window: Page): Promise<void> {
     [".sidebar", "background-color", "var(--sidebar)"],
     [".topbar", "background-color", "var(--main)"],
     [".sidebar__new", "background-color", "var(--surface)"],
-    [".session-row--active", "background-color", "var(--surface)"],
     [".composer__surface", "background-color", "var(--surface)"],
     [".message__content pre", "background-color", "var(--code-block-bg)"],
   ];
@@ -248,6 +247,11 @@ async function expectSameDesign(window: Page): Promise<void> {
       .poll(() => elementCssProperty(window, selector, property), selector)
       .toBe(await resolveColor(window, token));
   }
+  // Active conversations intentionally use the project accent while every
+  // ordinary theme surface continues to use the preset's own tokens.
+  await expect
+    .poll(() => elementCssProperty(window, ".session-row--active", "background-color"))
+    .toBe(await elementCssProperty(window, ".shell", "background-color"));
 }
 
 async function selectThemePreset(window: Page, name: string): Promise<void> {

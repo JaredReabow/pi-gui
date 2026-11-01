@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { PiSdkDriver } from "@pi-gui/pi-sdk-driver";
@@ -10,8 +12,47 @@ import {
   makeUserDataDir,
   makeWorkspace,
   seedAgentDir,
+  waitForWorkspaceByPath,
+  writeProjectExtension,
 } from "../helpers/electron-app";
 import { SCHEDULED_TASK_INTERVIEW_PROMPT } from "../../contracts/scheduled-tasks";
+
+const OPEN_REPLY_PROVIDER = "scheduled-open-reply";
+const openReplyProvider = (calledFile: string) => String.raw`
+import { writeFileSync } from "node:fs";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+
+export default function openReplyProvider(pi) {
+  pi.registerProvider("${OPEN_REPLY_PROVIDER}", {
+    baseUrl: "http://127.0.0.1:9/never-contact",
+    apiKey: "LOCAL_TEST_CANARY",
+    api: "${OPEN_REPLY_PROVIDER}",
+    models: [{
+      id: "open",
+      name: "Open reply",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 4096,
+    }],
+    streamSimple(model, _context, options) {
+      const stream = createAssistantMessageEventStream();
+      writeFileSync(${JSON.stringify(calledFile)}, "called");
+      options?.signal?.addEventListener("abort", () => {
+        const aborted = {
+          role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "aborted", timestamp: Date.now(),
+        };
+        stream.push({ type: "error", reason: "aborted", error: aborted });
+      });
+      return stream;
+    },
+  });
+}
+`;
 
 test("manual create, tabs, pause, and restart keep scheduled tasks", async () => {
   test.setTimeout(90_000);
@@ -144,6 +185,100 @@ test("firing a due existing-thread task labels the user bubble and shows a chip"
     expect(after.selectedSessionId).toBe(sessionId);
     expect(after.composerDraft).toBe(composerDraft);
     expect(after.scheduledTasks[0]?.runs[0]?.sessionId).toBe(sessionId);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("a due scheduled message waits while another message is queued", async () => {
+  test.setTimeout(60_000);
+  const userDataDir = await makeUserDataDir();
+  const workspacePath = await makeWorkspace("scheduled-queue-dedupe");
+  const agentDir = join(userDataDir, "agent");
+  const called = join(userDataDir, "scheduled-queue-model-called");
+  await seedAgentDir(agentDir, { withOpenAiAuth: false, withDefaultModel: false });
+  await writeFile(
+    join(agentDir, "settings.json"),
+    JSON.stringify({
+      defaultProvider: OPEN_REPLY_PROVIDER,
+      defaultModel: "open",
+      enabledModels: [`${OPEN_REPLY_PROVIDER}/open`],
+      packages: [],
+      cacheWarming: "off",
+      compaction: { enabled: false },
+    }),
+  );
+  await writeProjectExtension(workspacePath, "scheduled-open-reply.ts", openReplyProvider(called));
+  const harness = await launchDesktop(userDataDir, {
+    agentDir,
+    initialWorkspaces: [workspacePath],
+    scrubProviderEnv: true,
+    testMode: "background",
+  });
+  try {
+    const window = await harness.firstWindow();
+    await waitForWorkspaceByPath(window, workspacePath);
+    await window
+      .getByRole("complementary")
+      .getByRole("button", { name: "New thread", exact: true })
+      .click();
+    await window.getByLabel("New thread prompt", { exact: true }).fill("Keep this reply running");
+    await window.getByRole("button", { name: "Start thread", exact: true }).click();
+    await expect.poll(() => existsSync(called)).toBe(true);
+    const initial = await getDesktopState(window);
+    const workspace = initial.workspaces.find((entry) => entry.id === initial.selectedWorkspaceId);
+    const session = workspace?.sessions.find((entry) => entry.id === initial.selectedSessionId);
+    if (!workspace || !session) {
+      throw new Error("Expected a selected scheduled-task target");
+    }
+    const sessionRef = { workspaceId: workspace.id, sessionId: session.id };
+    await window.evaluate(async (target) => {
+      const app = globalThis.window.piApp;
+      if (!app) {
+        throw new Error("piApp IPC bridge is unavailable");
+      }
+      await app.createScheduledTask({
+        title: "Queue once",
+        instruction: "Run the queued chronological task",
+        schedule: { kind: "interval", everyMs: 60_000 },
+        target: { kind: "existing-thread", ...target },
+      });
+    }, sessionRef);
+
+    await fireDueScheduledTasks(harness, new Date(Date.now() + 10 * 60_000).toISOString());
+    await expect
+      .poll(async () => (await getDesktopState(window)).queuedComposerMessages.length)
+      .toBe(1);
+    const afterFirst = await getDesktopState(window);
+    const firstQueueId = afterFirst.queuedComposerMessages[0]?.id;
+    const firstNextRunAt = afterFirst.scheduledTasks[0]?.nextRunAt;
+    expect(firstQueueId).toBeTruthy();
+    expect(afterFirst.scheduledTasks[0]?.runs).toHaveLength(1);
+
+    await fireDueScheduledTasks(harness, new Date(Date.now() + 20 * 60_000).toISOString());
+    const afterSecond = await getDesktopState(window);
+    expect(afterSecond.queuedComposerMessages.map((message) => message.id)).toEqual([firstQueueId]);
+    expect(afterSecond.scheduledTasks[0]?.runs).toHaveLength(1);
+    expect(afterSecond.scheduledTasks[0]?.nextRunAt).toBe(firstNextRunAt);
+
+    await window.evaluate(async (messageId) => {
+      const app = globalThis.window.piApp;
+      if (!app) {
+        throw new Error("piApp IPC bridge is unavailable");
+      }
+      await app.removeQueuedComposerMessage(messageId);
+    }, firstQueueId!);
+    await expect
+      .poll(async () => (await getDesktopState(window)).queuedComposerMessages.length)
+      .toBe(0);
+
+    await fireDueScheduledTasks(harness, new Date(Date.now() + 21 * 60_000).toISOString());
+    await expect
+      .poll(async () => (await getDesktopState(window)).queuedComposerMessages.length)
+      .toBe(1);
+    const afterDrain = await getDesktopState(window);
+    expect(afterDrain.queuedComposerMessages[0]?.id).not.toBe(firstQueueId);
+    expect(afterDrain.scheduledTasks[0]?.runs).toHaveLength(2);
   } finally {
     await harness.close();
   }

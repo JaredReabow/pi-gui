@@ -219,6 +219,7 @@ test("new IPC capabilities use the main-frame boundary with decoders", async () 
     "setFolderPreference",
     "setAllThreadsSort",
     "setProjectAccentColor",
+    "setActivityIndicatorStyle",
     "getEffectiveChildModelSettings",
   ]) {
     expect(source).toMatch(new RegExp(`handleMainFrame\\(\\s*desktopIpc\\.${channel},`));

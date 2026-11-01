@@ -1,5 +1,6 @@
 import type { EffectiveChildModelSettings } from "../contracts/child-selection";
 import type {
+  ActivityIndicatorStyle,
   FolderPreference,
   AllThreadsSort,
   MarkAllThreadsReadInput,
@@ -341,6 +342,8 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.setAllThreadsSort, sort) as Promise<DesktopAppState>,
   setProjectAccentColor: (input: SetProjectAccentColorInput) =>
     ipcRenderer.invoke(desktopIpc.setProjectAccentColor, input) as Promise<DesktopAppState>,
+  setActivityIndicatorStyle: (style: ActivityIndicatorStyle) =>
+    ipcRenderer.invoke(desktopIpc.setActivityIndicatorStyle, style) as Promise<DesktopAppState>,
   getEffectiveChildModelSettings: (workspaceId: string) =>
     ipcRenderer.invoke(
       desktopIpc.getEffectiveChildModelSettings,

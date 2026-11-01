@@ -1,4 +1,5 @@
 import {
+  sidebarPreferences_decodeActivityStyle,
   sidebarPreferences_decodeFolder,
   sidebarPreferences_decodeSort,
   sidebarPreferences_decodeMarkRead,
@@ -95,6 +96,7 @@ type StateOwner = Pick<
   | "setFolderPreference"
   | "setAllThreadsSort"
   | "setProjectAccentColor"
+  | "setActivityIndicatorStyle"
   | "getEffectiveChildModelSettings"
   | "setThreadGrouping"
   | "setWorkspaceCollapsed"
@@ -319,6 +321,11 @@ export function registerDesktopIpc({
     desktopIpc.setProjectAccentColor,
     projectIdentity_decodeSetAccent,
     (input, { event }) => immediate(event, () => owners.state.setProjectAccentColor(input)),
+  );
+  handleMainFrame(
+    desktopIpc.setActivityIndicatorStyle,
+    sidebarPreferences_decodeActivityStyle,
+    (style, { event }) => immediate(event, () => owners.state.setActivityIndicatorStyle(style)),
   );
   handleMainFrame(
     desktopIpc.setFolderPreference,

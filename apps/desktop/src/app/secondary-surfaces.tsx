@@ -14,6 +14,7 @@ import {
   type CustomProviderConfig,
   type DesktopNotificationPermissionStatus,
 } from "../../contracts/ipc";
+import { sidebarPreferences_defaultActivityStyle } from "../../contracts/sidebar-preferences";
 import { CustomizePage } from "../features/extensions/customize-page";
 import { SettingsView, type SettingsSection } from "../features/settings/settings-view";
 import {
@@ -459,6 +460,10 @@ export function SecondarySurfaces({
           notificationPermissionPending={notificationPermissionPending}
           modelSettingsScopeMode={snapshot.modelSettingsScopeMode}
           integratedTerminalShell={snapshot.integratedTerminalShell}
+          activityIndicatorStyle={
+            snapshot.sidebarAppearance?.activityIndicatorPreference.style ??
+            sidebarPreferences_defaultActivityStyle
+          }
           themeMode={snapshot.themeMode}
           themePresetId={snapshot.themePresetId}
           enableTransparency={snapshot.enableTransparency}
@@ -473,6 +478,13 @@ export function SecondarySurfaces({
           onSetDefaultModel={handleSetDefaultModel}
           onSetNotificationPreferences={handleSetNotificationPreferences}
           onSetIntegratedTerminalShell={handleSetIntegratedTerminalShell}
+          onSetActivityIndicatorStyle={(style) => {
+            void updateSnapshot(setSnapshot, () => api.setActivityIndicatorStyle(style)).catch(
+              (error: unknown) => {
+                console.error("[renderer] setActivityIndicatorStyle failed", error);
+              },
+            );
+          }}
           onRequestNotificationPermission={handleRequestNotificationPermission}
           onOpenSystemNotificationSettings={handleOpenSystemNotificationSettings}
           onSetScopedModelPatterns={handleSetScopedModelPatterns}

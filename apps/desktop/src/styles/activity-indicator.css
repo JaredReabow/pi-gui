@@ -1,0 +1,153 @@
+.activity-indicator {
+  width: 18px;
+  height: 22px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  vertical-align: middle;
+  color: currentColor;
+}
+
+.activity-indicator svg {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.settings-activity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.activity-spin {
+  transform-origin: 12px 12px;
+  animation: activity-spin 1.2s linear infinite;
+}
+
+.activity-ball {
+  animation: activity-bounce 650ms ease-in-out infinite alternate;
+}
+
+.activity-wave {
+  animation: activity-wave 1s linear infinite;
+}
+
+.activity-limbs {
+  transform-origin: 12px 9px;
+  animation: activity-dance 450ms ease-in-out infinite alternate;
+}
+
+.activity-legs {
+  transform-origin: 12px 14px;
+  animation: activity-dance 450ms ease-in-out infinite alternate-reverse;
+}
+
+/* The opposing half-cycle keeps one foot planted while the body glides back. */
+.activity-moonwalk {
+  animation: activity-moonwalk-glide 1.2s linear infinite;
+}
+
+.activity-moonwalk-leg {
+  animation: activity-moonwalk-step 1.2s linear infinite;
+}
+
+.activity-moonwalk-leg--back {
+  animation-delay: -600ms;
+  opacity: 0.55;
+}
+
+.activity-moonwalk-arm {
+  transform-origin: 13px 8px;
+  animation: activity-moonwalk-arm 1.2s ease-in-out infinite;
+}
+
+.activity-moonwalk-partner {
+  transform-origin: 8px 8px;
+  animation: activity-moonwalk-partner 900ms ease-in-out infinite alternate;
+}
+
+@keyframes activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes activity-bounce {
+  to {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes activity-wave {
+  to {
+    transform: translateX(24px);
+  }
+}
+
+@keyframes activity-dance {
+  from {
+    transform: rotate(-18deg);
+  }
+
+  to {
+    transform: rotate(18deg);
+  }
+}
+
+@keyframes activity-moonwalk-step {
+  0%,
+  100% {
+    d: path("M12 13 L15 17 L17 21 L21 21");
+  }
+
+  45% {
+    d: path("M12 13 L10 17 L6 21 L10 21");
+  }
+
+  50% {
+    d: path("M12 13 L9 16 L7 19 L9 21");
+  }
+
+  75% {
+    d: path("M12 13 L14 16 L15 18 L17 20");
+  }
+}
+
+@keyframes activity-moonwalk-glide {
+  0%,
+  100% {
+    transform: translate(1px, 0);
+  }
+
+  45%,
+  50% {
+    transform: translate(-1px, -0.5px);
+  }
+}
+
+@keyframes activity-moonwalk-arm {
+  0%,
+  100% {
+    transform: rotate(-15deg);
+  }
+
+  50% {
+    transform: rotate(25deg);
+  }
+}
+
+@keyframes activity-moonwalk-partner {
+  from {
+    transform: translateY(0) rotate(-5deg);
+  }
+
+  to {
+    transform: translateY(-1px) rotate(6deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator * {
+    animation: none !important;
+  }
+}

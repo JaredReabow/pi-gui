@@ -7,6 +7,9 @@
 - Added persistent conversation goals, in-thread model switching with a context-change
   confirmation, prompt-history recall, copy controls, full Markdown transcript copy, and
   day/hour/minute/second duration formatting.
+- Scheduled messages now wait for the target thread's existing queued message to drain
+  instead of stacking additional follow-ups. Due tasks remain pending and can fire once the
+  queue becomes empty.
 - Kept pre-compaction messages and tool calls visible, pinned the prompt responsible for
   the response currently in view, and compacted completed tool rows without hiding failures.
 - Added the selectable running indicator styles, with the moonwalk pair as the default.
@@ -15,6 +18,11 @@
 
 - Added persistent per-project colours, muted inactive projects, separate rounded inactive
   thread rows, and perimeter colour only for the active project.
+- Restored the project-coloured window perimeter and active-project seam bridge in maintained
+  source, aligned the pane corners with the native window curve, and kept the full title strip
+  draggable.
+- Restored the six selectable running indicators in Settings, including the animated moonwalk,
+  sine wave, bouncing ball, stick figure, wheel, and spiral, with durable persistence.
 - Added open, partial, and closed folder states, unread and selected-thread reveal, compact
   child rows with inline age, separated child groups, and parent/child history controls.
 - Added All Threads sorting by activity, latest human input, unread state, creation time,

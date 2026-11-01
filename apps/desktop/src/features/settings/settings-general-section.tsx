@@ -1,26 +1,44 @@
 import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { ModelSettingsScopeMode } from "../../../contracts/desktop-state";
-import { useTranslation } from "../../i18n";
-import { SettingsSegmented, SettingsSwitch } from "./settings-controls";
+import type { ActivityIndicatorStyle } from "../../../contracts/sidebar-preferences";
+import { useTranslation, type MessageKey } from "../../i18n";
+import { ActivityIndicator } from "../../ui/activity-indicator";
+import { SettingsSegmented, SettingsSelect, SettingsSwitch } from "./settings-controls";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly integratedTerminalShell: string;
+  readonly activityIndicatorStyle: ActivityIndicatorStyle;
   readonly onSetModelSettingsScopeMode: (mode: ModelSettingsScopeMode) => void;
   readonly onSetIntegratedTerminalShell: (shellPath: string) => void;
   readonly onToggleSkillCommands: (enabled: boolean) => void;
+  readonly onSetActivityIndicatorStyle: (style: ActivityIndicatorStyle) => void;
 }
+
+const ACTIVITY_INDICATOR_OPTIONS: readonly {
+  readonly value: ActivityIndicatorStyle;
+  readonly label: MessageKey;
+}[] = [
+  { value: "moonwalk", label: "settings.general.activityIndicator.moonwalk" },
+  { value: "stick", label: "settings.general.activityIndicator.stick" },
+  { value: "wheel", label: "settings.general.activityIndicator.wheel" },
+  { value: "ball", label: "settings.general.activityIndicator.ball" },
+  { value: "wave", label: "settings.general.activityIndicator.wave" },
+  { value: "spiral", label: "settings.general.activityIndicator.spiral" },
+];
 
 export function SettingsGeneralSection({
   runtime,
   modelSettingsScopeMode,
   integratedTerminalShell,
+  activityIndicatorStyle,
   onSetModelSettingsScopeMode,
   onSetIntegratedTerminalShell,
   onToggleSkillCommands,
+  onSetActivityIndicatorStyle,
 }: SettingsGeneralSectionProps) {
   const { t } = useTranslation();
   const [terminalShellDraft, setTerminalShellDraft] = useState(integratedTerminalShell);
@@ -61,6 +79,26 @@ export function SettingsGeneralSection({
             label={t("settings.general.skillCommands.label")}
             onChange={onToggleSkillCommands}
           />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title={t("settings.general.groupRuntime")}>
+        <SettingsRow
+          title={t("settings.general.activityIndicator.title")}
+          description={t("settings.general.activityIndicator.description")}
+        >
+          <span className="settings-activity-control">
+            <SettingsSelect
+              label={t("settings.general.activityIndicator.label")}
+              options={ACTIVITY_INDICATOR_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
+              value={activityIndicatorStyle}
+              onChange={onSetActivityIndicatorStyle}
+            />
+            <ActivityIndicator style={activityIndicatorStyle} />
+          </span>
         </SettingsRow>
       </SettingsGroup>
 

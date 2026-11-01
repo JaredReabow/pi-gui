@@ -1,0 +1,287 @@
+/* The native window clips the outer frame; these layers paint its project
+   perimeter, pane gutters and rounded join without exposing the backing surface. */
+.shell {
+  --window-outer-radius: 12px;
+  --window-pane-radius: 8px;
+  --window-row-radius: 14px;
+  --window-perimeter-width: 3px;
+  --window-pane-gap: 6px;
+  gap: var(--window-pane-gap);
+  padding: var(--window-perimeter-width);
+  overflow: visible;
+  border-radius: var(--window-outer-radius);
+  background: var(--workspace-accent, var(--window));
+  isolation: isolate;
+}
+
+.shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  border: var(--window-perimeter-width) solid var(--workspace-accent, transparent);
+  border-radius: var(--window-outer-radius);
+}
+
+/* Fill the native window's square backing at the CSS corners. */
+.shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--workspace-accent, var(--window));
+}
+
+.sidebar,
+.main {
+  border: 1px solid color-mix(in srgb, var(--workspace-accent, var(--line)) 18%, var(--line));
+}
+
+.sidebar {
+  overflow: hidden;
+  border-radius: var(--window-pane-radius) var(--window-pane-radius) var(--window-pane-radius)
+    var(--window-pane-radius);
+  border-right-color: color-mix(in srgb, var(--workspace-accent, var(--line)) 54%, var(--line));
+}
+
+.main {
+  border-radius: var(--window-pane-radius) var(--window-pane-radius) var(--window-pane-radius)
+    var(--window-pane-radius);
+  border-color: color-mix(in srgb, var(--workspace-accent, var(--accent)) 34%, var(--line));
+}
+
+.shell--sidebar-collapsed .main,
+.shell--loading .main,
+.shell--loading .sidebar {
+  border-radius: var(--window-outer-radius);
+}
+
+/* Every inactive project retains its saved hue in a quieter form. */
+.workspace-row:not(.workspace-row--active) {
+  background: color-mix(in srgb, var(--workspace-accent) 16%, var(--sidebar));
+  border-color: color-mix(in srgb, var(--workspace-accent) 30%, transparent);
+}
+
+.workspace-row--active {
+  background: var(--workspace-accent);
+  border-color: var(--workspace-accent);
+  border-radius: 0 var(--window-row-radius) var(--window-row-radius) 0;
+  color: var(--workspace-accent-ink);
+}
+
+.workspace-row--active .workspace-row__name,
+.workspace-row--active .workspace-row__icon,
+.workspace-row--active .workspace-row__action-button,
+.workspace-row--active .workspace-row__menu-button {
+  color: var(--workspace-accent-ink);
+}
+
+/* Conversation rows remain independent pills at every hierarchy level. */
+.session-row {
+  min-height: 24px;
+  border-radius: var(--window-row-radius);
+  background: color-mix(in srgb, var(--workspace-accent) 11%, var(--sidebar));
+}
+
+.session-row--active {
+  background: var(--workspace-accent);
+  border-color: color-mix(in srgb, var(--workspace-accent) 72%, #000);
+  color: var(--workspace-accent-ink);
+}
+
+.session-row--active .session-row__title,
+.session-row--active .session-row__context,
+.session-row--active .session-row__time,
+.session-row--active .session-row__child-meta,
+.session-row--active .session-row__workspace-icon,
+.session-row--active .session-row__tree-toggle,
+.session-row--active .icon-button {
+  color: var(--workspace-accent-ink);
+}
+
+/* Compact rows keep hierarchy through indentation and container gaps instead
+   of vertical rules or stacked metadata. */
+.session-list,
+.thread-tree-node {
+  row-gap: 4px;
+}
+
+.session-row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.session-row__select {
+  min-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.session-row__title-line {
+  min-height: 18px;
+  align-items: center;
+  gap: 5px;
+}
+
+.session-row__title {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row__time {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.session-row__trailing {
+  height: 20px;
+}
+
+.session-row__action,
+.session-row__children-toggle {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+}
+
+.session-tree__children {
+  margin-top: 4px;
+  margin-bottom: 4px;
+  row-gap: 4px;
+}
+
+.session-tree__children::before,
+.thread-tree-children::before,
+.workspace-group .thread-tree {
+  border-left: 0 !important;
+}
+
+.session-row[data-thread-origin="agent"] .session-row__title {
+  font-size: 11px;
+}
+
+.session-row[data-thread-origin="agent"] .session-row__context {
+  font-size: 10px;
+}
+
+.session-row__status.session-row__status--running {
+  width: 18px;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  animation: none;
+}
+
+/* Controlled joins live in front of neighbouring headings and never erase text. */
+.project-accent-bridge {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 0 var(--window-row-radius) var(--window-row-radius) 0;
+  background: var(--project-header-fill);
+}
+
+.sidebar__top,
+.sidebar__section {
+  position: relative;
+  z-index: 2;
+}
+
+.sidebar__footer {
+  position: relative;
+  z-index: 2;
+}
+
+.project-accent-bridge::before {
+  content: "";
+  position: absolute;
+  top: -24px;
+  left: 0;
+  width: 24px;
+  height: calc(100% + 48px);
+  background:
+    radial-gradient(circle at 24px 0, var(--sidebar) 0 23.5px, var(--project-header-fill) 24px) 0
+      0 / 24px 24px no-repeat,
+    radial-gradient(circle at 24px 24px, var(--sidebar) 0 23.5px, var(--project-header-fill) 24px) 0
+      100% / 24px 24px no-repeat;
+}
+
+.workspace-row,
+.all-threads__head {
+  position: relative;
+  z-index: 3;
+}
+
+.workspace-row::before,
+.workspace-row::after {
+  display: none;
+}
+
+.workspace-group:has(.workspace-menu),
+.worktree-group:has(.workspace-menu),
+.workspace-row:has(.workspace-menu),
+.workspace-row__menu-wrap:has(.workspace-menu) {
+  position: relative;
+  z-index: 70;
+}
+
+.workspace-menu {
+  z-index: 100;
+}
+
+/* Preserve the reference title-strip drag region while controls remain usable. */
+.sidebar__top::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  -webkit-app-region: drag;
+}
+
+.topbar,
+.topbar__actions,
+.workbench__tabbar {
+  -webkit-app-region: drag;
+}
+
+.topbar button,
+.topbar button *,
+.topbar input,
+.topbar select,
+.topbar a,
+.topbar [role="button"],
+.topbar [contenteditable="true"],
+.topbar [role="menu"],
+.topbar [role="menu"] *,
+.workbench__tabbar button,
+.workbench__tabbar button *,
+.workbench__tabbar input,
+.sidebar__toggle {
+  -webkit-app-region: no-drag;
+}
+
+@media (max-width: 1180px) {
+  .shell {
+    --window-pane-gap: 5px;
+  }
+}
+
+@media (max-width: 760px) {
+  .project-accent-bridge {
+    display: none;
+  }
+
+  .workspace-row--active {
+    border-radius: var(--window-row-radius);
+  }
+}

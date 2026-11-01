@@ -1,5 +1,6 @@
 import type { EffectiveChildModelSettings } from "./child-selection";
 import type {
+  ActivityIndicatorStyle,
   FolderPreference,
   AllThreadsSort,
   MarkAllThreadsReadInput,
@@ -172,6 +173,7 @@ export const desktopIpc = {
   setFolderPreference: "pi-gui:set-folder-preference",
   setAllThreadsSort: "pi-gui:set-all-threads-sort",
   setProjectAccentColor: "pi-gui:set-project-accent-color",
+  setActivityIndicatorStyle: "pi-gui:set-activity-indicator-style",
   getEffectiveChildModelSettings: "pi-gui:get-effective-child-model-settings",
   setSessionPinned: "pi-gui:set-session-pinned",
   createSession: "pi-gui:create-session",
@@ -1230,6 +1232,7 @@ export interface PiDesktopApi {
   setFolderPreference(workspaceId: string, preference: FolderPreference): Promise<DesktopAppState>;
   setAllThreadsSort(sort: AllThreadsSort): Promise<DesktopAppState>;
   setProjectAccentColor(input: SetProjectAccentColorInput): Promise<DesktopAppState>;
+  setActivityIndicatorStyle(style: ActivityIndicatorStyle): Promise<DesktopAppState>;
   getEffectiveChildModelSettings(workspaceId: string): Promise<EffectiveChildModelSettings>;
   setSessionPinned(target: WorkspaceSessionTarget, pinned: boolean): Promise<DesktopAppState>;
   createSession(input: CreateSessionInput): Promise<DesktopAppState>;

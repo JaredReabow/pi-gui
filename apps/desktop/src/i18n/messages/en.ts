@@ -177,6 +177,17 @@ export const en = {
   "settings.general.skillCommands.description":
     "Offer each skill as a slash command in the composer.",
   "settings.general.skillCommands.label": "Enable skill slash commands",
+  "settings.general.groupRuntime": "Runtime",
+  "settings.general.activityIndicator.title": "Activity indicator",
+  "settings.general.activityIndicator.description":
+    "Choose the animation shown while a thread is running.",
+  "settings.general.activityIndicator.label": "Activity indicator",
+  "settings.general.activityIndicator.moonwalk": "Moonwalking stick figure",
+  "settings.general.activityIndicator.stick": "Dancing stick figure",
+  "settings.general.activityIndicator.wheel": "Wheel",
+  "settings.general.activityIndicator.ball": "Bouncing ball",
+  "settings.general.activityIndicator.wave": "Sine-wave line",
+  "settings.general.activityIndicator.spiral": "Spiral",
   "settings.general.groupTerminal": "Terminal",
   "settings.general.shell.title": "Shell",
   "settings.general.shell.description":

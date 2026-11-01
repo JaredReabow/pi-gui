@@ -127,7 +127,7 @@ export function sidebarOrder_creationAge(createdAt: string | undefined): string 
   const timestamp = createdAt;
   return sidebarOrder_timestamp(timestamp) === Number.NEGATIVE_INFINITY
     ? "Unknown"
-    : formatRelativeTime(timestamp!);
+    : `Age ${formatRelativeTime(timestamp!)}`;
 }
 
 export function sidebarOrder_sessionAge(session: SessionRecord): string {
