@@ -1,3 +1,4 @@
+import type { SessionTerminalRun } from "@pi-gui/session-driver";
 import type {
   SessionCatalogEntry,
   SessionCatalogSnapshot,
@@ -22,6 +23,10 @@ export interface CatalogStorage {
     getSession(sessionRef: SessionRef): Promise<SessionCatalogEntry | undefined>;
     /** Writes the entry; its stoppedReplyId is ignored, the stored one is kept. */
     upsertSession(entry: SessionCatalogEntry): Promise<void>;
+    /** Allocates a generation and invalidates the preceding settlement before starting a run. */
+    beginRun(sessionRef: SessionRef, runId: string): Promise<number>;
+    /** Compare-and-set: a superseded run can never overwrite its successor. */
+    settleRun(sessionRef: SessionRef, terminalRun: SessionTerminalRun): Promise<boolean>;
     /**
      * The only writer of stoppedReplyId: sets it, or clears it with undefined. It is kept
      * apart from the entry, so it holds before the entry exists and through any entry

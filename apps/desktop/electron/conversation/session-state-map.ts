@@ -1,3 +1,4 @@
+import type { SessionInitiatingOrigin } from "../../contracts/child-selection";
 import { randomUUID } from "node:crypto";
 import type {
   ExtensionFlagValues,
@@ -50,6 +51,8 @@ export class SessionStateMap {
   readonly queuedComposerMessagesBySession = new Map<string, QueuedComposerMessage[]>();
   readonly queuedComposerEditsBySession = new Map<string, QueuedComposerEditState>();
   readonly sessionConfigBySession = new Map<string, SessionConfig>();
+  readonly initiatingOriginBySession = new Map<string, SessionInitiatingOrigin>();
+  readonly createdAtBySession = new Map<string, string>();
   readonly lastViewedAtBySession = new Map<string, string>();
   readonly lastInteractedAtBySession = new Map<string, string>();
   readonly pinnedAtBySession = new Map<string, string>();
@@ -99,6 +102,8 @@ export class SessionStateMap {
       this.queuedComposerMessagesBySession,
       this.queuedComposerEditsBySession,
       this.sessionConfigBySession,
+      this.initiatingOriginBySession,
+      this.createdAtBySession,
       this.lastViewedAtBySession,
       this.lastInteractedAtBySession,
       this.pinnedAtBySession,
@@ -134,6 +139,8 @@ export class SessionStateMap {
     let changed = false;
     for (const map of [
       this.composerDraftsBySession,
+      this.initiatingOriginBySession,
+      this.createdAtBySession,
       this.lastViewedAtBySession,
       this.lastInteractedAtBySession,
       this.pinnedAtBySession,
@@ -167,6 +174,8 @@ export class SessionStateMap {
     this.queuedComposerMessagesBySession.delete(key);
     this.queuedComposerEditsBySession.delete(key);
     this.sessionConfigBySession.delete(key);
+    this.initiatingOriginBySession.delete(key);
+    this.createdAtBySession.delete(key);
     this.lastViewedAtBySession.delete(key);
     this.lastInteractedAtBySession.delete(key);
     this.pinnedAtBySession.delete(key);

@@ -44,6 +44,8 @@ export default [
       ),
       "**/*.d.{ts,mts,cts}",
       ".pnpm-store/**",
+      "artifacts/**",
+      ".parallelism/**",
       ".cursor/**",
       ".worktrees/**",
       ".claude/worktrees/**",
@@ -159,6 +161,13 @@ export default [
   ),
   ...["catalogs", "pi-sdk-driver", "session-driver", "extension-ui"].map((name) =>
     typedProject([`packages/${name}/**/*.{ts,tsx,mts,cts}`], `packages/${name}/tsconfig.lint.json`),
+  ),
+  typedProject(
+    [
+      "packages/distribution-config/src/**/*.{ts,tsx,mts,cts}",
+      "packages/distribution-support/src/**/*.{ts,tsx,mts,cts}",
+    ],
+    "packages/distribution-config/tsconfig.distribution-lint.json",
   ),
   // One program for every example: a program per example ran typed lint out of memory in CI.
   typedProject(

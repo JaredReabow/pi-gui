@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import {
   getSelectedSession,
+  desktopState_humanInputHistory,
   getSelectedWorkspace,
   type AppView,
   type CreateScheduledTaskInput,
@@ -10,7 +10,7 @@ import {
   nonCompletedBindingForSession,
   scheduledOriginsByMessageId,
 } from "../../contracts/scheduled-tasks";
-import { updateSnapshot, useDesktopAppState } from "./desktop-app-state";
+import { applySnapshotIfNewer, updateSnapshot, useDesktopAppState } from "./desktop-app-state";
 import { DesktopStartupSurface, toStartupSurfaceState } from "./desktop-recovery";
 import { buildFileWorkbenchContexts } from "./file-workbench-contexts";
 import { canTogglePrimarySidebar } from "./app-shell-utils";
@@ -71,7 +71,9 @@ import {
   type ScheduledEditorState,
 } from "../features/scheduled-tasks/scheduled-task-editor";
 import { ScheduledTaskChip } from "../features/scheduled-tasks/scheduled-task-chip";
+import { scheduledTaskStatusActionsCreateController } from "../features/scheduled-tasks/scheduled-task-status-actions";
 import { useSlashMenu } from "../features/conversation/hooks/use-slash-menu";
+import { useConversationModelShell } from "./conversation-model-shell";
 import { useMentionMenu } from "../features/conversation/hooks/use-mention-menu";
 import { useThreadSearch } from "../features/conversation/hooks/use-thread-search";
 import { useWorkspaceMenu } from "../features/threads/hooks/use-workspace-menu";
@@ -101,6 +103,10 @@ export default function App() {
   const workbenchWidth = useWorkbenchWidth();
   const snapshot = desktop.snapshot;
   const setSnapshot = desktop.setSnapshot;
+  const snapshotRef = useRef(desktop.snapshot);
+  snapshotRef.current = snapshot;
+  const currentRevisionRef = useRef<number>(snapshot?.revision ?? -1);
+  currentRevisionRef.current = Math.max(currentRevisionRef.current, snapshot?.revision ?? -1);
   const selectedTranscript = desktop.selectedTranscript;
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [settingsWorkspaceId, setSettingsWorkspaceId] = useState("");
@@ -120,11 +126,25 @@ export default function App() {
   } | null>(null);
   const [scheduledEditor, setScheduledEditor] = useState<ScheduledEditorState | null>(null);
   const api = window.piApp;
-
+  const scheduledTaskStatusActions = useMemo(
+    () =>
+      api &&
+      scheduledTaskStatusActionsCreateController({
+        updateScheduledTask: (taskId, patch) => api.updateScheduledTask(taskId, patch),
+        applySnapshot: (next) => {
+          const currentRevision = currentRevisionRef.current;
+          if (next.revision < currentRevision) return false;
+          currentRevisionRef.current = next.revision;
+          applySnapshotIfNewer(setSnapshot, next);
+          return true;
+        },
+        getCurrentTasks: () => snapshotRef.current?.scheduledTasks ?? [],
+      }),
+    [api, setSnapshot],
+  );
   useEffect(() => {
     const piApi = window.piApp;
     if (!piApi) return;
-
     void piApi
       .getResolvedTheme()
       .then((theme) => {
@@ -135,27 +155,22 @@ export default function App() {
         // Keep the variant painted at startup so preset changes still apply.
         setResolvedTheme((current) => current ?? getActiveTheme().variant);
       });
-
     const unsub = piApi.onThemeChanged((theme) => {
       setResolvedTheme(theme);
     });
-
     return unsub;
   }, []);
-
   useEffect(() => {
     const themePresetId = snapshot?.themePresetId;
     if (!resolvedTheme || !themePresetId) return;
     applyTheme(themePresetId, resolvedTheme);
   }, [resolvedTheme, snapshot?.themePresetId]);
-
   useEffect(() => {
     document.documentElement.classList.toggle(
       "enable-transparency",
       snapshot?.enableTransparency ?? false,
     );
   }, [snapshot?.enableTransparency]);
-
   const activeTheme = useActiveTheme();
   const extensionViewTheme = useMemo<ExtensionViewTheme>(
     () => ({
@@ -166,7 +181,6 @@ export default function App() {
     }),
     [activeTheme],
   );
-
   const {
     activeWorktrees,
     linkedWorktreeByWorkspaceId,
@@ -446,7 +460,6 @@ export default function App() {
     setComposerDraft,
     focusComposer,
   });
-
   const dismissSchemaSkewNotice = useCallback((sessionKey: string) => {
     setDismissedSchemaSkewSessionKeys((current) => {
       if (current.has(sessionKey)) {
@@ -457,7 +470,6 @@ export default function App() {
       return next;
     });
   }, []);
-
   const openSettings = (workspaceId?: string, section?: SettingsSection) => {
     if (!api) {
       return;
@@ -478,7 +490,6 @@ export default function App() {
       },
     );
   };
-
   const {
     treeModalState,
     forkModalState,
@@ -501,6 +512,17 @@ export default function App() {
     setComposerDraft,
     focusComposer,
   });
+  const modelSwitch = useConversationModelShell({
+    api,
+    target: workbenchTarget,
+    runtime: selectedModelRuntime,
+    currentThinkingLevel: resolvedSessionThinkingLevel,
+    currentProvider: resolvedSessionProvider,
+    currentModelId: resolvedSessionModelId,
+    composerDraft,
+    setComposerDraft,
+    setSnapshot,
+  });
 
   const slashMenu = useSlashMenu({
     composerDraft,
@@ -520,6 +542,7 @@ export default function App() {
     updateSnapshot,
     allowTreeCommand: true,
     onRunTreeCommand: openTreeModal,
+    onSelectModelOption: modelSwitch.requestModelSwitch,
   });
 
   const enableSelectedMentionExtension = useCallback(
@@ -600,6 +623,7 @@ export default function App() {
     handlePastedClipboardImage,
     handleComposerKeyDown,
   } = useSessionComposer({
+    humanInputHistory: desktopState_humanInputHistory(activeTranscript),
     api,
     snapshot,
     setSnapshot,
@@ -701,9 +725,7 @@ export default function App() {
   };
 
   const selectedThreadTarget =
-    snapshot?.activeView === "threads" && selectedWorkspace && selectedSession
-      ? { workspaceId: selectedWorkspace.id, sessionId: selectedSession.id }
-      : undefined;
+    snapshot?.activeView === "threads" ? (workbenchTarget ?? undefined) : undefined;
   const selectedThreadActions =
     selectedThreadTarget && selectedSession
       ? threadMenu.actionsFor({
@@ -792,31 +814,6 @@ export default function App() {
   ]
     .filter(Boolean)
     .join(" ");
-  const handleSetSessionModel = (provider: string, modelId: string) => {
-    if (!selectedWorkspace || !selectedSession) {
-      return;
-    }
-    void updateSnapshot(setSnapshot, () =>
-      api.setSessionModel(selectedWorkspace.id, selectedSession.id, provider, modelId),
-    ).catch((error: unknown) => {
-      console.error("[renderer] updateSnapshot failed", error);
-    });
-  };
-
-  const handleSetSessionThinking = (level: string) => {
-    if (!selectedWorkspace || !selectedSession) {
-      return;
-    }
-    void updateSnapshot(setSnapshot, () =>
-      api.setSessionThinkingLevel(
-        selectedWorkspace.id,
-        selectedSession.id,
-        level as NonNullable<RuntimeSnapshot["settings"]["defaultThinkingLevel"]>,
-      ),
-    ).catch((error: unknown) => {
-      console.error("[renderer] updateSnapshot failed", error);
-    });
-  };
 
   const handleTrySkill = (command: string) => {
     void updateSnapshot(setSnapshot, () => api.setActiveView("threads")).catch((error: unknown) => {
@@ -945,7 +942,7 @@ export default function App() {
               console.error("[renderer] open file from palette failed", error);
             });
         }}
-        onSelectModel={handleSetSessionModel}
+        onSelectModel={modelSwitch.requestModelSwitch}
       />
     ) : null;
 
@@ -1044,6 +1041,7 @@ export default function App() {
         >
           {snapshot.activeView === "threads" && selectedWorkspace && selectedSession ? (
             <ChatHeaderActions
+              modelSelector={modelSwitch.modelSelector}
               actions={selectedThreadActions}
               runningLabel={runningLabel}
               session={selectedSession}
@@ -1079,6 +1077,7 @@ export default function App() {
               updateSnapshot={updateSnapshot}
               onCreateWithPi={handleCreateScheduledTaskWithPi}
               onOpenEditor={setScheduledEditor}
+              statusActions={scheduledTaskStatusActions}
             />
           ) : snapshot.activeView === "new-thread" ? (
             rootWorkspaceOptions.length > 0 ? (
@@ -1198,6 +1197,8 @@ export default function App() {
               {scheduledBinding ? (
                 <ScheduledTaskChip
                   task={scheduledBinding}
+                  tasks={snapshot.scheduledTasks}
+                  statusActions={scheduledTaskStatusActions}
                   onOpen={() => setScheduledEditor({ mode: "edit", taskId: scheduledBinding.id })}
                 />
               ) : null}
@@ -1237,8 +1238,8 @@ export default function App() {
                 onSelectSlashOption={(option) => {
                   slashMenu.applySlashOptionSelection(option);
                 }}
-                onSetModel={handleSetSessionModel}
-                onSetThinking={handleSetSessionThinking}
+                onSetModel={modelSwitch.requestModelSwitch}
+                onSetThinking={modelSwitch.setThinkingLevel}
                 modelOnboarding={selectedSessionModelOnboarding}
                 onOpenModelSettings={(section) =>
                   openSettings(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id, section)
@@ -1278,6 +1279,7 @@ export default function App() {
                 extensionNotices={selectedExtensionUi?.notices}
                 annotations={transcriptAnnotations}
               />
+              {modelSwitch.confirmation}
               {activeExtensionDialog ? (
                 <ExtensionDialog
                   dialog={activeExtensionDialog}

@@ -31,6 +31,7 @@ import { TurnChangesCard, type OpenTurnChange } from "./turn-changes-card";
 import type { WorkspaceFileLine } from "./workspace-file-line";
 import { InlineDiff, extractDiffFromOutput } from "../../ui/diff-inline";
 import {
+  CheckIcon,
   ChevronRightIcon,
   CopyIcon,
   DiffIcon,
@@ -40,6 +41,12 @@ import {
   TerminalIcon,
 } from "../../ui/icons";
 import { extensionToLanguage } from "../../ui/syntax-highlight";
+import {
+  conversationCopyResponseMarkdown,
+  conversationCopyToolContent,
+  useConversationClipboard,
+} from "./conversation-copy";
+import { conversationDurationFormat } from "./conversation-duration";
 
 export function TimelineItem({
   item,
@@ -237,28 +244,84 @@ function TimelineMessage({
         text={item.text}
         workspacePath={workspacePath}
       />
-      {forkable ? (
+      {forkable || item.text.length > 0 ? (
         <div className="timeline-item__actions">
-          <button
-            type="button"
-            className="timeline-item__action"
-            title={
-              onForkFromMessage
-                ? "Fork conversation from this point"
-                : "Fork is available when the run finishes"
-            }
-            aria-label="Fork conversation from this point"
-            data-testid="fork-from-message"
-            disabled={!onForkFromMessage}
-            onClick={() => onForkFromMessage?.(sourceMessageIndex, item.text)}
-          >
-            <ForkIcon />
-            <span className="timeline-item__action-label">Fork</span>
-          </button>
+          {item.text.length > 0 ? (
+            <TimelineCopyAction
+              label="Copy response"
+              testId="copy-response"
+              text={conversationCopyResponseMarkdown(item.text)}
+            />
+          ) : null}
+          {forkable ? (
+            <button
+              type="button"
+              className="timeline-item__action"
+              title={
+                onForkFromMessage
+                  ? "Fork conversation from this point"
+                  : "Fork is available when the run finishes"
+              }
+              aria-label="Fork conversation from this point"
+              data-testid="fork-from-message"
+              disabled={!onForkFromMessage}
+              onClick={() => onForkFromMessage?.(sourceMessageIndex, item.text)}
+            >
+              <ForkIcon />
+              <span className="timeline-item__action-label">Fork</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
       {markers}
     </article>
+  );
+}
+
+function TimelineCopyAction({
+  text,
+  label,
+  testId,
+}: {
+  readonly text: string;
+  readonly label: string;
+  readonly testId: string;
+}) {
+  const clipboard = useConversationClipboard();
+  const visibleLabel =
+    clipboard.state === "success"
+      ? "Copied"
+      : clipboard.state === "error"
+        ? "Copy failed"
+        : label.replace(/^Copy /, "");
+  const accessibleLabel =
+    clipboard.state === "success"
+      ? "Copied"
+      : clipboard.state === "error"
+        ? `${label} failed. Try again`
+        : label;
+  return (
+    <span className="timeline-copy-control">
+      <button
+        aria-label={accessibleLabel}
+        className="conversation-copy-button"
+        data-copy-state={clipboard.state}
+        data-copy-variant="labeled"
+        data-testid={testId}
+        type="button"
+        onClick={() => clipboard.copyText(text)}
+      >
+        {clipboard.state === "success" ? <CheckIcon /> : <CopyIcon />}
+        <span>{visibleLabel}</span>
+      </button>
+      <span
+        aria-live={clipboard.state === "error" ? "assertive" : "polite"}
+        className="conversation-copy-announcement"
+        role={clipboard.state === "error" ? "alert" : "status"}
+      >
+        {clipboard.announcement}
+      </span>
+    </span>
   );
 }
 
@@ -298,15 +361,11 @@ function TimelineToolCallItem({
   const inlineDetail = item.status === "error" ? item.detail : undefined;
   const images = toolOutputImages(item.output);
 
-  const handleCopy = () => {
-    const text = diffText ?? formatToolContent(item.input, item.output);
-    void navigator.clipboard.writeText(text).catch((error: unknown) => {
-      console.error("[renderer] navigator.clipboard.writeText failed", error);
-    });
-  };
-
   return (
-    <article className={`timeline-tool timeline-tool--${item.status}`}>
+    <article
+      className={`timeline-tool timeline-tool--${item.status}`}
+      data-tool-call-id={item.callId}
+    >
       <div className="timeline-tool__header-row">
         <span className="timeline-tool__glyph" aria-hidden="true">
           {extensionLabel === undefined || diffText ? toolGlyph(item.toolName) : <SparkIcon />}
@@ -381,28 +440,18 @@ function TimelineToolCallItem({
                     </span>
                   ) : null}
                 </span>
-                <button
-                  className="icon-button timeline-tool__copy"
-                  type="button"
-                  onClick={handleCopy}
-                  aria-label="Copy"
-                >
-                  <CopyIcon />
-                </button>
+                <TimelineToolCopyButton
+                  text={diffText ?? conversationCopyToolContent(item.input, item.output)}
+                />
               </div>
               <InlineDiff diff={diffText} language={diffLanguage} />
             </>
           ) : (
             <>
               <div className="timeline-tool__body-actions">
-                <button
-                  className="icon-button timeline-tool__copy"
-                  type="button"
-                  onClick={handleCopy}
-                  aria-label="Copy"
-                >
-                  <CopyIcon />
-                </button>
+                <TimelineToolCopyButton
+                  text={conversationCopyToolContent(item.input, item.output)}
+                />
               </div>
               <pre className="timeline-tool__pre">{formatToolContent(item.input, item.output)}</pre>
             </>
@@ -410,6 +459,37 @@ function TimelineToolCallItem({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function TimelineToolCopyButton({ text }: { readonly text: string }) {
+  const clipboard = useConversationClipboard();
+  const label =
+    clipboard.state === "success"
+      ? "Copied"
+      : clipboard.state === "error"
+        ? "Copy failed"
+        : "Copy tool content";
+  return (
+    <span className="timeline-copy-control">
+      <button
+        className="icon-button timeline-tool__copy"
+        type="button"
+        onClick={() => clipboard.copyText(text)}
+        aria-label={label}
+        data-copy-state={clipboard.state}
+        data-testid="copy-tool-content"
+      >
+        {clipboard.state === "success" ? <CheckIcon /> : <CopyIcon />}
+      </button>
+      <span
+        aria-live={clipboard.state === "error" ? "assertive" : "polite"}
+        className="conversation-copy-announcement"
+        role={clipboard.state === "error" ? "alert" : "status"}
+      >
+        {clipboard.announcement}
+      </span>
+    </span>
   );
 }
 
@@ -494,9 +574,12 @@ function statusLabel(status: "running" | "success" | "error") {
 }
 
 function TimelineTurnMarkerItem({ item }: { readonly item: TimelineTurnMarker }) {
+  const duration = conversationDurationFormat(item.durationMs);
   return (
     <div className="timeline-turn-marker" data-testid="timeline-turn-marker">
-      <span className="timeline-turn-marker__label">{`Worked for ${formatWorkedDuration(item.durationMs)}`}</span>
+      <span className="timeline-turn-marker__label">
+        {duration ? `Worked for ${duration}` : "Worked"}
+      </span>
     </div>
   );
 }
@@ -508,21 +591,6 @@ function TimelineWorkingItem({ item }: { readonly item: TimelineWorkingIndicator
       <span className="timeline-working__label">{label}</span>
     </div>
   );
-}
-
-function formatWorkedDuration(durationMs: number): string {
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) {
-    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const remMinutes = minutes % 60;
-  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
 
 function TimelineSummaryItem({ item }: { readonly item: TimelineSummary }) {

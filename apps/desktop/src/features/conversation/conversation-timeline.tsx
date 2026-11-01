@@ -24,7 +24,10 @@ import { TimelineItem } from "./timeline-item";
 import { sameRowContent, type TimelineRow } from "./timeline-layout";
 import type { OpenTurnChange } from "./turn-changes-card";
 import type { WorkspaceFileLine } from "./workspace-file-line";
-import { SparkIcon } from "../../ui/icons";
+import { CheckIcon, CopyIcon, SparkIcon } from "../../ui/icons";
+import { ContextualPrompt } from "./contextual-prompt";
+import { conversationCopyTranscriptMarkdown, useConversationClipboard } from "./conversation-copy";
+import "../../styles/conversation-copy.css";
 
 interface ThreadSearchModel {
   readonly isOpen: boolean;
@@ -82,6 +85,10 @@ export function ConversationTimeline({
     annotations,
     platform,
   });
+  const transcriptMarkdown = useMemo(
+    () => conversationCopyTranscriptMarkdown(transcript),
+    [transcript],
+  );
   const annotationList = annotations?.list;
   // Keyed by every id an annotation knows its message by: a row keeps its live id after it
   // is saved, and a reload shows it by its saved id.
@@ -123,7 +130,7 @@ export function ConversationTimeline({
   }, [transcript]);
   return (
     <ExtensionToolLabelsContext.Provider value={extensionToolLabels}>
-      <div className="timeline-surface" ref={surfaceRef}>
+      <div className="timeline-surface" data-testid="timeline-surface" ref={surfaceRef}>
         <div className="timeline-column">
           {threadSearch.isOpen ? (
             <ThreadSearchBar
@@ -137,6 +144,13 @@ export function ConversationTimeline({
               onClose={threadSearch.close}
             />
           ) : null}
+          {!isTranscriptLoading && !transcriptFailed ? (
+            <ContextualPrompt transcript={transcript} viewport={viewport} />
+          ) : null}
+          <TranscriptCopyControl
+            disabled={isTranscriptLoading || Boolean(transcriptFailed) || transcript.length === 0}
+            text={transcriptMarkdown}
+          />
           <div
             className="timeline-pane timeline-pane--thread"
             data-testid="timeline-pane"
@@ -212,6 +226,53 @@ export function ConversationTimeline({
         {annotationSelection.layer}
       </div>
     </ExtensionToolLabelsContext.Provider>
+  );
+}
+
+function TranscriptCopyControl({
+  text,
+  disabled,
+}: {
+  readonly text: string;
+  readonly disabled: boolean;
+}) {
+  const clipboard = useConversationClipboard();
+  const label =
+    clipboard.state === "success"
+      ? "Copied active-branch transcript"
+      : clipboard.state === "error"
+        ? "Transcript copy failed. Try again"
+        : "Copy active-branch transcript";
+  const visibleLabel =
+    clipboard.state === "success"
+      ? "Copied"
+      : clipboard.state === "error"
+        ? "Copy failed"
+        : "Copy branch";
+  return (
+    <div className="conversation-transcript-copy">
+      <button
+        aria-label={label}
+        className="conversation-copy-button"
+        data-copy-state={clipboard.state}
+        data-copy-variant="labeled"
+        data-testid="copy-transcript"
+        disabled={disabled}
+        title="Copy active-branch transcript"
+        type="button"
+        onClick={() => clipboard.copyText(text)}
+      >
+        {clipboard.state === "success" ? <CheckIcon /> : <CopyIcon />}
+        <span>{visibleLabel}</span>
+      </button>
+      <span
+        aria-live={clipboard.state === "error" ? "assertive" : "polite"}
+        className="conversation-copy-announcement"
+        role={clipboard.state === "error" ? "alert" : "status"}
+      >
+        {clipboard.announcement}
+      </span>
+    </div>
   );
 }
 

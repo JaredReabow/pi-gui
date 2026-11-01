@@ -133,6 +133,29 @@
   gap: 8px;
 }
 
+.sidebar__mark-read {
+  color: var(--muted-soft);
+}
+
+.sidebar__mark-read:not(:disabled) {
+  color: var(--status-success);
+}
+
+.sidebar__mark-read-report {
+  margin: 2px 0 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.sidebar__mark-read-report--failed,
+.sidebar__mark-read-report--partial {
+  color: var(--status-error);
+}
+
 .thread-grouping {
   position: relative;
   letter-spacing: normal;
@@ -417,6 +440,18 @@
   gap: 2px;
 }
 
+.workspace-row__select[data-folder-state="partial"]::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--muted-soft);
+  transform: translateY(-50%);
+}
+
 .workspace-row__menu-wrap {
   position: relative;
   display: grid;
@@ -489,6 +524,38 @@
   background: var(--surface-muted);
 }
 
+.workspace-menu__label {
+  display: grid;
+  gap: 1px;
+  margin: 2px 0;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workspace-menu__label > span:first-child {
+  padding: 0 11px 3px;
+}
+
+.workspace-menu__folder-option {
+  min-height: 28px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.workspace-menu__folder-option[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-muted);
+}
+
+.workspace-menu__folder-option svg {
+  width: 14px;
+  height: 14px;
+}
+
 .workspace-menu__item--danger {
   color: var(--error);
 }
@@ -550,6 +617,49 @@
   gap: 2px;
 }
 
+.all-threads {
+  display: grid;
+  gap: 2px;
+}
+
+.all-threads__head {
+  min-height: 24px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted-subtle);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.all-threads__sort {
+  min-width: 0;
+}
+
+.all-threads__sort select {
+  max-width: 116px;
+  min-height: 24px;
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-soft);
+  font-size: 11px;
+}
+
+.all-threads__sort select:hover,
+.all-threads__sort select:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--text-strong);
+}
+
+.all-threads__list {
+  gap: 3px;
+}
+
 .pinned-thread-group {
   display: grid;
   gap: 4px;
@@ -592,9 +702,9 @@
 }
 
 .session-row {
-  padding: 6px 8px;
+  padding: 3px 6px;
   border-radius: var(--radius-md);
-  min-height: 32px;
+  min-height: 28px;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px;
   position: relative;
@@ -633,7 +743,7 @@
   align-items: center;
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
-  padding-left: 18px;
+  padding-left: 21px;
   text-align: left;
   color: inherit;
   position: relative;
@@ -682,13 +792,23 @@
 .session-row__body {
   min-width: 0;
   display: grid;
-  gap: 1px;
+  gap: 0;
 }
 
 .session-tree__children {
-  margin-left: 28px;
-  padding-left: 5px;
-  border-left: 1px solid var(--line);
+  margin: 3px 0 4px 22px;
+  padding-left: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.session-tree__origin {
+  padding: 2px 6px 0;
+  color: var(--muted-subtle);
+  font-size: 9px;
+  font-weight: 620;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
 }
 
 .session-row--parent {
@@ -712,7 +832,7 @@
 .session-row__title-line {
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -721,6 +841,10 @@
   font-weight: var(--font-normal);
   color: var(--text-strong);
   min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .session-row__context {
@@ -731,8 +855,75 @@
   white-space: nowrap;
 }
 
-.session-row__trailing {
+.session-row__child-count {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--muted-soft);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row__child-meta {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted-soft);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.session-row__child-status {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  text-transform: capitalize;
+}
+
+.session-row__child-status--running,
+.session-row__child-status--waiting,
+.session-row__child-status--queued {
+  color: var(--status-running);
+}
+
+.session-row__child-status--failed {
+  color: var(--status-error);
+}
+
+.session-row__child-status--cancelled {
+  color: var(--muted-strong);
+  text-decoration: line-through;
+}
+
+.session-row__child-status--complete {
+  color: var(--status-success);
+}
+
+.session-row__child-model,
+.session-row__child-history {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row__child-history {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row__trailing {
+  /* Reserve the hover actions up front. Growing this grid column only while
+     hovered narrows the title and can move a button between pointer-down and
+     pointer-up, turning a real click into a lost click. */
+  min-width: 52px;
   height: 24px;
   position: relative;
   display: flex;
@@ -751,12 +942,6 @@
   gap: 1px;
 }
 
-.session-row:hover .session-row__trailing,
-.session-row:focus-within .session-row__trailing,
-.session-row--pinned .session-row__trailing {
-  min-width: 52px;
-}
-
 .session-row__trailing:has(.session-row__workspace-icon) {
   padding-left: 18px;
 }
@@ -769,10 +954,14 @@
 }
 
 .session-row__time {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  position: static;
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
 }
 
 .session-row__workspace-icon {
@@ -861,21 +1050,12 @@
   margin-left: 18px;
 }
 
-.session-row:hover .session-row__time,
-.session-row:focus-within .session-row__time {
-  opacity: 0;
-}
-
 .session-row:hover .session-row__action,
 .session-row:focus-within .session-row__action {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: scale(1);
-}
-
-.session-row--pinned .session-row__time {
-  opacity: 0;
 }
 
 .session-row--pinned .session-row__pin-action {

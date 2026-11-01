@@ -329,6 +329,11 @@
   padding: 12px;
 }
 
+.file-editor__source {
+  background: var(--code-block-bg);
+  color: var(--code-ink);
+}
+
 .file-editor__line {
   min-height: 1.5em;
   font-family: var(--font-mono);

@@ -418,6 +418,7 @@ function link(
   childId: string,
   parentWorkspaceId = "ws",
   childWorkspaceId = "ws",
+  extra: Partial<ChildThreadLink> = {},
 ): ChildThreadLink {
   return {
     id,
@@ -427,6 +428,7 @@ function link(
     childSessionId: childId,
     title: childId,
     status: "complete",
+    ...extra,
   };
 }
 
@@ -452,6 +454,7 @@ test("nests children under their parent, even from another workspace, in the par
   expect(parent.session.id).toBe("parent");
   expect(parent.children?.map(sessionThreadKey)).toEqual(["other:child"]);
   expect(parent.children?.[0]?.parentKey).toBe("ws:parent");
+  expect(parent.children?.[0]?.childStatus).toBe("complete");
   expect(model.workspaceGroups[1]?.threads).toEqual([]);
   expect(visibleThreadShortcutOrder({ grouping: "time", model }).map(sessionThreadKey)).toEqual([
     "ws:unrelated",
@@ -537,4 +540,147 @@ test("malformed cycles cannot hide sessions or loop during hierarchy traversal",
   const visible = flattenThreadTrees(model.recencySections.flatMap((section) => section.threads));
   expect(new Set(visible.map(sessionThreadKey)).size).toBe(3);
   expect(visible).toHaveLength(3);
+});
+
+test("preserves multiple generations while optional origin remains unknown", () => {
+  const origin = {
+    kind: "child-thread" as const,
+    source: "desktop-host" as const,
+    parentWorkspaceId: "ws",
+    parentSessionId: "child",
+    sourceToolCallId: "call-grandchild",
+  };
+  const model = buildThreadSidebarModel(
+    state(
+      [
+        workspace("ws", "Main", [
+          session("root", "root", {
+            updatedAt: isoDaysAgo(0),
+            initiatingOrigin: { kind: "human", source: "desktop-host" },
+          }),
+          session("child", "child", {
+            updatedAt: isoDaysAgo(0),
+            initiatingOrigin: { kind: "tool", source: "desktop-host" },
+          }),
+          session("grandchild", "grandchild", {
+            updatedAt: isoDaysAgo(0),
+            initiatingOrigin: { kind: "scheduled", source: "desktop-host" },
+          }),
+        ]),
+      ],
+      {
+        childThreadLinks: [
+          link("child-link", "root", "child", "ws", "ws", {
+            origin: {
+              kind: "child-thread",
+              source: "desktop-host",
+              parentWorkspaceId: "ws",
+              parentSessionId: "root",
+            },
+            selectedConfig: { provider: "provider-a", modelId: "model-b" },
+            createdAt: isoDaysAgo(1),
+          }),
+          link("grandchild-link", "child", "grandchild", "ws", "ws", {
+            origin,
+            status: "cancelled",
+            createdAt: isoDaysAgo(0),
+          }),
+        ],
+      },
+    ),
+    nowMs,
+  );
+
+  const root = model.allThreadsRoots.find((thread) => thread.session.id === "root");
+  const child = root?.children?.[0];
+  const grandchild = child?.children?.[0];
+  expect(root?.descendantCount).toBe(2);
+  expect(child?.childOriginGroup).toBe("tool");
+  expect(child?.childSelectedConfig).toEqual({ provider: "provider-a", modelId: "model-b" });
+  expect(grandchild?.childStatus).toBe("cancelled");
+  expect(grandchild?.childOriginGroup).toBe("scheduled");
+  expect(sessionThreadKey(grandchild!)).toBe("ws:grandchild");
+});
+
+test("tool-call correlation alone never supplies child initiating identity", () => {
+  const model = buildThreadSidebarModel(
+    state(
+      [
+        workspace("ws", "Main", [
+          session("parent", "Parent", { updatedAt: isoDaysAgo(0) }),
+          session("correlated", "Correlated", { updatedAt: isoDaysAgo(0) }),
+        ]),
+      ],
+      {
+        childThreadLinks: [
+          link("correlated-link", "parent", "correlated", "ws", "ws", {
+            origin: {
+              kind: "child-thread",
+              source: "desktop-host",
+              parentWorkspaceId: "ws",
+              parentSessionId: "parent",
+              sourceToolCallId: "tool-call-is-correlation-only",
+            },
+          }),
+        ],
+      },
+    ),
+    nowMs,
+  );
+  const child = model.allThreadsRoots.find((thread) => thread.session.id === "parent")
+    ?.children?.[0];
+  expect(child?.session.initiatingOrigin).toBeUndefined();
+  expect(child?.childOriginGroup).toBe("unknown");
+});
+
+test("All Threads deduplicates navigation aliases and applies the staged sorts", () => {
+  const alpha = session("alpha", "Alpha", {
+    updatedAt: isoDaysAgo(0, 8),
+    lastInteractedAt: isoDaysAgo(2),
+    createdAt: isoDaysAgo(1),
+    hasUnseenUpdate: true,
+  });
+  const beta = session("beta", "Beta", {
+    updatedAt: isoDaysAgo(0, 9),
+    lastInteractedAt: isoDaysAgo(0, 9),
+    createdAt: isoDaysAgo(3),
+  });
+  const root = workspace("ws", "Main", [alpha, beta]);
+  const linked = workspace("wt", "Worktree", [beta], {
+    kind: "worktree",
+    rootWorkspaceId: "ws",
+  });
+  const worktree: WorktreeRecord = {
+    id: "wt-record",
+    rootWorkspaceId: "ws",
+    linkedWorkspaceId: "wt",
+    name: "Worktree",
+    path: "/tmp/wt",
+    status: "ready",
+    branchName: "feature",
+    updatedAt: isoDaysAgo(0),
+  };
+  const model = buildThreadSidebarModel(
+    state([root, linked], {
+      worktreesByWorkspace: { ws: [worktree, worktree] },
+      allThreadsSort: "title",
+    }),
+    nowMs,
+  );
+  expect(model.allThreadsSort).toBe("title");
+  expect(model.allThreadsRoots.map((thread) => thread.session.id)).toEqual(["alpha", "beta"]);
+  expect(model.markReadTargets).toEqual([{ workspaceId: "ws", sessionId: "alpha" }]);
+
+  const activityModel = buildThreadSidebarModel(
+    state([root, linked], {
+      worktreesByWorkspace: { ws: [worktree, worktree] },
+      allThreadsSort: "activity",
+    }),
+    nowMs,
+  );
+  expect(
+    activityModel.recencySections
+      .flatMap((section) => section.threads)
+      .filter((thread) => thread.session.id === "beta"),
+  ).toHaveLength(1);
 });

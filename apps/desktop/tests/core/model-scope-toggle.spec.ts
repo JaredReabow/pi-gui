@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import {
+  confirmModelSwitch,
   createNamedThread,
   commitAllInGitRepo,
   desktopShortcut,
@@ -251,6 +252,7 @@ async function selectComposerModel(window: Page, label: string): Promise<void> {
   const dropdown = window.locator(".composer__bar .model-selector__dropdown").first();
   await expect(dropdown).toBeVisible();
   await dropdown.getByRole("button", { name: new RegExp(label, "i") }).click();
+  await confirmModelSwitch(window);
 }
 
 function settingsWorkspacePicker(window: Page) {

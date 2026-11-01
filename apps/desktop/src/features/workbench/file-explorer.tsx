@@ -87,7 +87,12 @@ export function FileExplorer({
       {emptyCopy ? (
         <div className="diff-panel__empty">{emptyCopy}</div>
       ) : (
-        <div className="file-workbench__tree" data-testid="file-workbench-tree">
+        <div
+          className="file-workbench__tree"
+          data-testid="file-workbench-tree"
+          tabIndex={0}
+          aria-label="Workspace files"
+        >
           {tree.map((node) => (
             <FileTreeRow
               key={node.path || node.name}

@@ -1,3 +1,8 @@
+import type {
+  ChildModelSelection,
+  EffectiveChildModelSettings,
+} from "../../contracts/child-selection";
+import { childSelection_decode } from "../../contracts/child-selection";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -35,7 +40,7 @@ import type { RefreshStateOptions } from "../application/refresh-state-options";
 import {
   archiveChildThreadsAction,
   createChildThreadAction,
-  createChildThreadPromptFromToolOutput,
+  createChildThreadRequestFromToolOutput,
   createChildThreadToolName,
   listThreadsAction,
   listThreadsRequestedFromToolOutput,
@@ -47,6 +52,7 @@ import {
   sendMessageToThreadFromToolOutput,
   sendMessageToThreadToolName,
 } from "./orchestration-runtime";
+import { childModelSelection_createOptions } from "./child-model-selection";
 import type {
   ArchiveChildThreadsToolDetails,
   CreateChildThreadToolDetails,
@@ -112,6 +118,8 @@ interface OrchestrationOwnerHost {
   ): () => void;
   updateSessionConfig(sessionRef: SessionRef, config: SessionConfig | undefined): void;
   buildCreateSessionOptions(workspaceId: string): Promise<CreateSessionOptions | undefined>;
+  /** Existing runtime-owner projection; orchestration never reads model policy or auth itself. */
+  getEffectiveChildModelSettings(workspaceId: string): Promise<EffectiveChildModelSettings>;
   getQueuedComposerMessages(
     sessionRef: SessionRef,
   ): readonly import("../../contracts/desktop-state").QueuedComposerMessage[];
@@ -160,7 +168,11 @@ export interface OrchestrationOwner {
   hasOrchestrationParentSession(sessionRef: SessionRef): boolean;
   createChildThreadToolResult(
     parentRef: SessionRef,
-    input: { readonly prompt: string; readonly toolCallId: string },
+    input: {
+      readonly prompt: string;
+      readonly toolCallId: string;
+      readonly selection?: ChildModelSelection;
+    },
   ): Promise<AgentToolResult<CreateChildThreadToolDetails>>;
   listThreadsToolResult(
     parentRef: SessionRef,
@@ -210,6 +222,7 @@ interface SpawnChildThreadInput {
   readonly parentSessionId: string;
   readonly prompt: string;
   readonly sourceToolCallId?: string;
+  readonly selection?: ChildModelSelection;
 }
 
 interface CreatedChildThreadResult {
@@ -262,7 +275,15 @@ async function createChildThreadRecord(
     pendingCreateChildThreadToolCalls.add(pendingKey);
   }
   try {
-    const createOptions = await store.buildCreateSessionOptions(input.parentWorkspaceId);
+    const selection = input.selection ? childSelection_decode(input.selection) : undefined;
+    const baseCreateOptions = await store.buildCreateSessionOptions(input.parentWorkspaceId);
+    const createOptions = selection
+      ? childModelSelection_createOptions(
+          await store.getEffectiveChildModelSettings(input.parentWorkspaceId),
+          selection,
+          baseCreateOptions,
+        )
+      : baseCreateOptions;
     const session = await store.driver.createSession(workspace, {
       ...createOptions,
       title: titleFromPrompt(prompt),
@@ -281,6 +302,22 @@ async function createChildThreadRecord(
       parentSessionId: input.parentSessionId,
       childWorkspaceId: childRef.workspaceId,
       childSessionId: childRef.sessionId,
+      origin: {
+        kind: "child-thread",
+        source: "desktop-host",
+        parentWorkspaceId: input.parentWorkspaceId,
+        parentSessionId: input.parentSessionId,
+        ...(input.sourceToolCallId ? { sourceToolCallId: input.sourceToolCallId } : {}),
+      },
+      ...(session.config
+        ? {
+            selectedConfig: {
+              provider: session.config.provider,
+              modelId: session.config.modelId,
+              thinkingLevel: session.config.thinkingLevel,
+            },
+          }
+        : {}),
       title: session.title || titleFromPrompt(prompt),
       goal: prompt,
       status,
@@ -367,8 +404,8 @@ async function handleCreateChildThreadToolResult(
     return true;
   }
 
-  const prompt = createChildThreadPromptFromToolOutput(event.output);
-  if (!prompt) {
+  const request = createChildThreadRequestFromToolOutput(event.output);
+  if (!request) {
     return false;
   }
 
@@ -377,8 +414,9 @@ async function handleCreateChildThreadToolResult(
     const result = await createChildThreadRecord(store, {
       parentWorkspaceId: event.sessionRef.workspaceId,
       parentSessionId: event.sessionRef.sessionId,
-      prompt,
+      prompt: request.prompt,
       sourceToolCallId: event.callId,
+      selection: request.selection,
     });
     deliveryStatus = result.deliveryStatus;
   } catch (error) {
@@ -387,7 +425,7 @@ async function handleCreateChildThreadToolResult(
     updateThreadToolOutput(
       store,
       event,
-      projectionFromToolResult(createChildThreadErrorResult(prompt, message)),
+      projectionFromToolResult(createChildThreadErrorResult(request.prompt, message)),
     );
     return true;
   }
@@ -401,7 +439,7 @@ async function handleCreateChildThreadToolResult(
     return false;
   }
 
-  updateCreateChildThreadToolOutput(store, event, prompt, child, deliveryStatus);
+  updateCreateChildThreadToolOutput(store, event, request.prompt, child, deliveryStatus);
   return true;
 }
 
@@ -544,13 +582,18 @@ async function cancelChildRunsForParent(
 async function createChildThreadToolResult(
   store: OrchestrationOwnerHost,
   parentRef: SessionRef,
-  input: { readonly prompt: string; readonly toolCallId: string },
+  input: {
+    readonly prompt: string;
+    readonly toolCallId: string;
+    readonly selection?: ChildModelSelection;
+  },
 ): Promise<AgentToolResult<CreateChildThreadToolDetails>> {
   const { child, deliveryStatus } = await createChildThreadRecord(store, {
     parentWorkspaceId: parentRef.workspaceId,
     parentSessionId: parentRef.sessionId,
     prompt: input.prompt,
     sourceToolCallId: input.toolCallId,
+    selection: input.selection,
   });
   const details: CreateChildThreadToolDetails = {
     action: createChildThreadAction,
@@ -560,6 +603,8 @@ async function createChildThreadToolResult(
     childSessionId: child.childSessionId,
     title: child.title,
     deliveryStatus,
+    origin: child.origin,
+    selectedConfig: child.selectedConfig,
   };
 
   return {
@@ -790,17 +835,26 @@ async function readThreadToolResult(
   parentRef: SessionRef,
   threadId: string,
 ): Promise<AgentToolResult<ReadThreadToolDetails>> {
-  const target = resolveThreadTarget(store, parentRef, threadId);
+  let target = resolveThreadTarget(store, parentRef, threadId);
   if (typeof target === "string") {
     return readThreadErrorResult(threadId, target);
   }
 
   await store.ensureSessionReady(target.sessionRef);
+  // Opening a cold session can replace its child projection and change visibility.
+  // Resolve again through the same access policy before reading hydrated state.
+  target = resolveThreadTarget(store, parentRef, threadId);
+  if (typeof target === "string") {
+    return readThreadErrorResult(threadId, target);
+  }
   const transcript = store.transcriptFor(target.sessionRef);
   const session = store.sessionFromState(target.sessionRef);
   const messages = toThreadReadMessages(transcript);
   const title = session?.title ?? target.child?.title ?? target.sessionRef.sessionId;
-  const status = target.child?.status ?? session?.status ?? "unknown";
+  const status =
+    target.child && session
+      ? toOrchestrationStatus(session.status, target.sessionRef, store)
+      : (target.child?.status ?? session?.status ?? "unknown");
   const details: ReadThreadToolDetails = {
     action: readThreadAction,
     threadId,
@@ -1297,6 +1351,17 @@ function projectSupervisionLoop(
   status: OrchestrationChildThreadStatus,
   nowIso: string,
 ): OrchestrationSupervisionLoop {
+  if (status === "cancelled") {
+    if (loop?.status === "stopped" && loop.lastChildStatus === status) return loop;
+    return {
+      ...(loop ?? createSupervisionLoop(status, nowIso)),
+      status: "stopped",
+      gate: "stop",
+      nextRunAt: undefined,
+      lastChildStatus: status,
+      reason: "Child run cancelled.",
+    };
+  }
   if (!loop) {
     return createSupervisionLoop(status, nowIso);
   }
@@ -1443,6 +1508,8 @@ function updateCreateChildThreadToolOutput(
       childSessionId: child.childSessionId,
       title: child.title,
       deliveryStatus,
+      origin: child.origin,
+      selectedConfig: child.selectedConfig,
     },
   });
 }
@@ -2369,6 +2436,7 @@ function toOrchestrationStatus(
   if (status === "running") {
     return "running";
   }
+  if (store.lastRunOutcome(sessionRef) === "stopped") return "cancelled";
   // An idle session that has never produced a run is queued, not complete. The
   // child record is inserted before its prompt is void-fired, so without this a
   // never-started child would read "complete" and trigger a false parent wake.

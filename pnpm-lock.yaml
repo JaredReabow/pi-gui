@@ -109,6 +109,12 @@ importers:
       '@pi-gui/catalogs':
         specifier: workspace:*
         version: link:../../packages/catalogs
+      '@pi-gui/distribution-config':
+        specifier: workspace:*
+        version: link:../../packages/distribution-config
+      '@pi-gui/distribution-support':
+        specifier: workspace:*
+        version: link:../../packages/distribution-support
       '@pi-gui/extension-ui':
         specifier: workspace:*
         version: link:../../packages/extension-ui
@@ -372,6 +378,14 @@ importers:
       '@pi-gui/session-driver':
         specifier: workspace:*
         version: link:../session-driver
+
+  packages/distribution-config:
+    dependencies:
+      '@pi-gui/distribution-support':
+        specifier: workspace:*
+        version: link:../distribution-support
+
+  packages/distribution-support: {}
 
   packages/extension-ui:
     dependencies:

@@ -22,6 +22,7 @@ import { SettingsNotificationsSection } from "./settings-notifications-section";
 import { SettingsProvidersSection } from "./settings-providers-section";
 import { type SettingsSection, settingsSectionDefinition } from "./settings-sections";
 import { SettingsShortcutsSection } from "./settings-shortcuts-section";
+import { SupportDevelopmentPanel } from "./support-development-panel";
 
 export type { SettingsSection } from "./settings-sections";
 
@@ -162,6 +163,8 @@ export function SettingsView({
               onToggleSkillCommands={onToggleSkillCommands}
             />
           ) : null}
+
+          {section === "general" ? <SupportDevelopmentPanel /> : null}
 
           {section === "shortcuts" ? <SettingsShortcutsSection platform={platform} /> : null}
 

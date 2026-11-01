@@ -1,3 +1,9 @@
+import type { EffectiveChildModelSettings } from "./child-selection";
+import type {
+  FolderPreference,
+  AllThreadsSort,
+  MarkAllThreadsReadInput,
+} from "./sidebar-preferences";
 import type {
   ExtensionViewOpenFile,
   DesktopExtensionViewInfo,
@@ -16,6 +22,12 @@ import type {
 import type { ClipboardImageRead } from "./composer-attachments";
 import type { DesktopEditorList } from "./editors";
 import type { SessionRef } from "@pi-gui/session-driver/types";
+import {
+  telemetryConsent_decodeRequest,
+  telemetryConsent_decodeStatus,
+  type TelemetryConsentRequest,
+  type TelemetryConsentStatusSnapshot,
+} from "./telemetry-consent";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "./workbench";
 import type {
   TurnChangesInput,
@@ -51,6 +63,13 @@ import type {
   CreateScheduledTaskInput,
   UpdateScheduledTaskInput,
 } from "./desktop-state";
+import {
+  lifecycle_decodeDraftFlushOutcome,
+  lifecycle_decodeRequestKey,
+  type DraftFlushExpectation,
+  type DraftFlushOutcome,
+  type LifecycleRequestKey,
+} from "./lifecycle";
 
 export type DesktopNotificationPermissionStatus =
   "granted" | "denied" | "default" | "unsupported" | "unknown";
@@ -148,6 +167,10 @@ export const desktopIpc = {
   archiveSession: "pi-gui:archive-session",
   unarchiveSession: "pi-gui:unarchive-session",
   markSessionRead: "pi-gui:mark-session-read",
+  markAllThreadsRead: "pi-gui:mark-all-threads-read",
+  setFolderPreference: "pi-gui:set-folder-preference",
+  setAllThreadsSort: "pi-gui:set-all-threads-sort",
+  getEffectiveChildModelSettings: "pi-gui:get-effective-child-model-settings",
   setSessionPinned: "pi-gui:set-session-pinned",
   createSession: "pi-gui:create-session",
   startThread: "pi-gui:start-thread",
@@ -218,6 +241,10 @@ export const desktopIpc = {
   updateComposerDraft: "pi-gui:update-composer-draft",
   flushPendingComposerDraft: "pi-gui:flush-pending-composer-draft",
   pendingComposerDraftFlushed: "pi-gui:pending-composer-draft-flushed",
+  capturePendingComposerDraft: "pi-gui:capture-pending-composer-draft",
+  pendingComposerDraftCaptured: "pi-gui:pending-composer-draft-captured",
+  flushPendingComposerDraftResult: "pi-gui:flush-pending-composer-draft-result",
+  pendingComposerDraftFlushedResult: "pi-gui:pending-composer-draft-flushed-result",
   submitComposer: "pi-gui:submit-composer",
   getSessionTree: "pi-gui:get-session-tree",
   navigateSessionTree: "pi-gui:navigate-session-tree",
@@ -241,10 +268,88 @@ export const desktopIpc = {
   setThemePresetId: "pi-gui:set-theme-preset-id",
   themeChanged: "pi-gui:theme-changed",
   windowFocused: "pi-gui:window-focused",
+  getSupportDevelopment: "pi-gui:get-support-development",
+  openSupportDevelopment: "pi-gui:open-support-development",
+  dismissSupportDevelopment: "pi-gui:dismiss-support-development",
+  getTelemetryConsentStatus: "pi-gui:get-telemetry-consent-status",
+  setTelemetryConsent: "pi-gui:set-telemetry-consent",
+  telemetryConsentChanged: "pi-gui:telemetry-consent-changed",
   ping: "app:ping",
   openExternal: "app:open-external",
   relaunchApplication: "pi-gui:relaunch-application",
 } as const;
+
+export type TelemetryConsentIpcUpdate = TelemetryConsentRequest;
+export type TelemetryConsentIpcStatus = TelemetryConsentStatusSnapshot;
+
+const TELEMETRY_CONSENT_IPC_MAX_STATUS_BYTES = 8_192;
+
+/** Strictly decode a no-payload telemetry status request. */
+export function telemetryConsentIpc_decodeEmpty(value: unknown): undefined {
+  if (value !== undefined) {
+    throw new TypeError("Telemetry consent status request must not include a payload.");
+  }
+  return undefined;
+}
+
+/** Strictly decode a renderer consent update without widening provenance fields. */
+export function telemetryConsentIpc_decodeUpdate(value: unknown): TelemetryConsentIpcUpdate {
+  return telemetryConsent_decodeRequest(value);
+}
+
+/** Strictly bound a public telemetry status snapshot before it crosses IPC. */
+export function telemetryConsentIpc_decodeStatus(value: unknown): TelemetryConsentIpcStatus {
+  const status = telemetryConsent_decodeStatus(value);
+  const bytes = new TextEncoder().encode(JSON.stringify(status)).byteLength;
+  if (bytes > TELEMETRY_CONSENT_IPC_MAX_STATUS_BYTES) {
+    throw new TypeError("Telemetry consent status exceeds the IPC byte bound.");
+  }
+  return status;
+}
+
+export interface SupportDevelopmentState {
+  readonly options: readonly SupportDevelopmentOption[];
+  readonly currentPromptDismissed: boolean;
+  readonly dontAskAgain: boolean;
+}
+
+declare const supportDevelopmentOptionIdBrand: unique symbol;
+
+export type SupportDevelopmentOptionId = string & {
+  readonly [supportDevelopmentOptionIdBrand]: true;
+};
+export type SupportDevelopmentDismissal = "not-now" | "dont-ask-again";
+
+export interface SupportDevelopmentAmount {
+  readonly currency: "AUD";
+  readonly minorUnits: number;
+}
+
+export interface SupportDevelopmentOption {
+  readonly id: SupportDevelopmentOptionId;
+  readonly label: string;
+  readonly cadence: "monthly" | "one-off";
+  readonly cadenceLabel: "Monthly" | "One-off";
+  readonly provider: "stripe" | "paypal";
+  readonly providerLabel: "Stripe" | "PayPal";
+  readonly amount: SupportDevelopmentAmount | null;
+  readonly recipient?: "Leo Software";
+}
+
+/** Validate the no-argument support status request. */
+export function supportDevelopment_decodeEmpty(value: unknown): undefined {
+  if (value !== undefined) {
+    throw new TypeError("Support development request must not include a payload.");
+  }
+  return undefined;
+}
+
+export function supportDevelopment_decodeDismissal(value: unknown): SupportDevelopmentDismissal {
+  if (value !== "not-now" && value !== "dont-ask-again") {
+    throw new TypeError("Support development dismissal must be not-now or dont-ask-again.");
+  }
+  return value;
+}
 
 export const desktopCommands = {
   openSettings: "open-settings",
@@ -720,6 +825,366 @@ export function isCloseFocusedSurfaceShortcut(input: {
  */
 export const drawWindowControlsArgument = "--pi-draw-window-controls";
 
+export interface PendingComposerDraftCaptureRequest {
+  readonly requestId: number;
+  readonly operationId: string;
+  readonly requestKey: LifecycleRequestKey;
+  readonly windowId: string;
+}
+
+export type PendingComposerDraftCaptureResponse =
+  | {
+      readonly requestId: number;
+      readonly status: "captured";
+      readonly expectation: DraftFlushExpectation;
+    }
+  | {
+      readonly requestId: number;
+      readonly status: "rejected";
+    };
+
+export interface PendingComposerDraftFlushRequest {
+  readonly requestId: number;
+  readonly expectation: DraftFlushExpectation;
+}
+
+export interface PendingComposerDraftFlushResponse {
+  readonly requestId: number;
+  readonly outcome: DraftFlushOutcome;
+}
+
+export type PendingComposerDraftCaptureHandler = (
+  request: PendingComposerDraftCaptureRequest,
+) => Promise<DraftFlushExpectation>;
+export type PendingComposerDraftFlushHandler = (
+  request: PendingComposerDraftFlushRequest,
+) => Promise<DraftFlushOutcome>;
+
+function pendingComposerDraft_assertJsonValue(
+  value: unknown,
+  location = "$",
+  ancestors = new WeakSet<object>(),
+  depth = 0,
+): void {
+  if (depth > 20) {
+    throw new TypeError(`${location} exceeds the nesting limit.`);
+  }
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${location} must be a finite number.`);
+    }
+    return;
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`${location} is not JSON data.`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new TypeError(`${location} cannot contain symbol keys.`);
+  }
+  if (ancestors.has(value)) {
+    throw new TypeError(`${location} cannot contain a cycle.`);
+  }
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (value.length > 256) {
+        throw new TypeError(`${location} exceeds the collection limit.`);
+      }
+      const names = Object.getOwnPropertyNames(value).filter((name) => name !== "length");
+      if (names.length !== value.length || names.some((name, index) => name !== String(index))) {
+        throw new TypeError(`${location} must be a dense array with no extra properties.`);
+      }
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          throw new TypeError(
+            `${location}[${index}] must be an enumerable data property with no accessor.`,
+          );
+        }
+        pendingComposerDraft_assertJsonValue(
+          descriptor.value,
+          `${location}[${index}]`,
+          ancestors,
+          depth + 1,
+        );
+      }
+      return;
+    }
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype) {
+      throw new TypeError(`${location} must be a plain JSON object.`);
+    }
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length > 64) {
+      throw new TypeError(`${location} has too many fields.`);
+    }
+    for (const name of names) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new TypeError(`${location}.${name} must be an enumerable data property.`);
+      }
+      pendingComposerDraft_assertJsonValue(
+        descriptor.value,
+        `${location}.${name}`,
+        ancestors,
+        depth + 1,
+      );
+    }
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function pendingComposerDraft_isRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype &&
+    Object.getOwnPropertySymbols(value).length === 0
+  );
+}
+
+function pendingComposerDraft_hasOnlyDataKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const names = Object.getOwnPropertyNames(value);
+  return (
+    names.length === keys.length &&
+    names.every((name) => keys.includes(name)) &&
+    keys.every((name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      return descriptor?.enumerable === true && "value" in descriptor;
+    })
+  );
+}
+
+function pendingComposerDraft_identifier(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 256 ||
+    value.trim() !== value ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new TypeError(`${field} must be a bounded identifier.`);
+  }
+  return value;
+}
+
+function pendingComposerDraft_requestId(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new TypeError("draft requestId must be a positive safe integer.");
+  }
+  return value as number;
+}
+
+function pendingComposerDraft_decodeExpectation(value: unknown): DraftFlushExpectation {
+  pendingComposerDraft_assertJsonValue(value, "draft expectation");
+  if (!pendingComposerDraft_isRecord(value)) {
+    throw new TypeError("draft expectation must be a plain object.");
+  }
+  const keys = ["operationId", "requestKey", "windowId", "editGeneration"] as const;
+  if (!pendingComposerDraft_hasOnlyDataKeys(value, keys)) {
+    throw new TypeError("draft expectation has an unsupported shape.");
+  }
+  const outcome = lifecycle_decodeDraftFlushOutcome({
+    operationId: value.operationId,
+    requestKey: value.requestKey,
+    windowId: value.windowId,
+    editGeneration: value.editGeneration,
+    status: "saved",
+  });
+  return {
+    operationId: outcome.operationId,
+    requestKey: outcome.requestKey,
+    windowId: outcome.windowId,
+    editGeneration: outcome.editGeneration,
+  };
+}
+
+export function pendingComposerDraft_decodeCaptureRequest(
+  value: unknown,
+): PendingComposerDraftCaptureRequest {
+  pendingComposerDraft_assertJsonValue(value, "draft capture request");
+  if (!pendingComposerDraft_isRecord(value)) {
+    throw new TypeError("draft capture request must be a plain object.");
+  }
+  const keys = ["requestId", "operationId", "requestKey", "windowId"] as const;
+  if (!pendingComposerDraft_hasOnlyDataKeys(value, keys)) {
+    throw new TypeError("draft capture request has an unsupported shape.");
+  }
+  return {
+    requestId: pendingComposerDraft_requestId(value.requestId),
+    operationId: pendingComposerDraft_identifier(value.operationId, "operationId"),
+    requestKey: lifecycle_decodeRequestKey(value.requestKey),
+    windowId: pendingComposerDraft_identifier(value.windowId, "windowId"),
+  };
+}
+
+export function pendingComposerDraft_decodeCaptureResponse(
+  value: unknown,
+  request?: PendingComposerDraftCaptureRequest,
+): PendingComposerDraftCaptureResponse {
+  pendingComposerDraft_assertJsonValue(value, "draft capture response");
+  if (!pendingComposerDraft_isRecord(value)) {
+    throw new TypeError("draft capture response must be a plain object.");
+  }
+  const requestId = pendingComposerDraft_requestId(value.requestId);
+  if (value.status === "rejected") {
+    if (!pendingComposerDraft_hasOnlyDataKeys(value, ["requestId", "status"])) {
+      throw new TypeError("rejected draft capture response has an unsupported shape.");
+    }
+    if (request && request.requestId !== requestId) {
+      throw new TypeError("draft capture response does not match its request.");
+    }
+    return { requestId, status: "rejected" };
+  }
+  if (value.status !== "captured") {
+    throw new TypeError("draft capture response status is not accepted.");
+  }
+  if (!pendingComposerDraft_hasOnlyDataKeys(value, ["requestId", "status", "expectation"])) {
+    throw new TypeError("captured draft response has an unsupported shape.");
+  }
+  const expectation = pendingComposerDraft_decodeExpectation(value.expectation);
+  if (
+    request &&
+    (request.requestId !== requestId ||
+      request.operationId !== expectation.operationId ||
+      !pendingComposerDraft_sameRequestKey(request.requestKey, expectation.requestKey) ||
+      request.windowId !== expectation.windowId)
+  ) {
+    throw new TypeError("draft capture response does not match its request.");
+  }
+  return { requestId, status: "captured", expectation };
+}
+
+export function pendingComposerDraft_decodeFlushRequest(
+  value: unknown,
+): PendingComposerDraftFlushRequest {
+  pendingComposerDraft_assertJsonValue(value, "draft flush request");
+  if (!pendingComposerDraft_isRecord(value)) {
+    throw new TypeError("draft flush request must be a plain object.");
+  }
+  if (!pendingComposerDraft_hasOnlyDataKeys(value, ["requestId", "expectation"])) {
+    throw new TypeError("draft flush request has an unsupported shape.");
+  }
+  return {
+    requestId: pendingComposerDraft_requestId(value.requestId),
+    expectation: pendingComposerDraft_decodeExpectation(value.expectation),
+  };
+}
+
+function pendingComposerDraft_decodeOutcomeForExpectation(
+  value: unknown,
+  expectation: DraftFlushExpectation,
+): DraftFlushOutcome {
+  const outcome = lifecycle_decodeDraftFlushOutcome(value);
+  if (
+    outcome.operationId !== expectation.operationId ||
+    !pendingComposerDraft_sameRequestKey(outcome.requestKey, expectation.requestKey) ||
+    outcome.windowId !== expectation.windowId ||
+    outcome.editGeneration !== expectation.editGeneration
+  ) {
+    throw new TypeError("draft outcome does not match its captured expectation.");
+  }
+  return outcome;
+}
+
+export function pendingComposerDraft_decodeFlushResponse(
+  value: unknown,
+  expectation?: DraftFlushExpectation,
+): PendingComposerDraftFlushResponse {
+  pendingComposerDraft_assertJsonValue(value, "draft flush response");
+  if (!pendingComposerDraft_isRecord(value)) {
+    throw new TypeError("draft flush response must be a plain object.");
+  }
+  if (!pendingComposerDraft_hasOnlyDataKeys(value, ["requestId", "outcome"])) {
+    throw new TypeError("draft flush response has an unsupported shape.");
+  }
+  const requestId = pendingComposerDraft_requestId(value.requestId);
+  const outcome = expectation
+    ? pendingComposerDraft_decodeOutcomeForExpectation(value.outcome, expectation)
+    : lifecycle_decodeDraftFlushOutcome(value.outcome);
+  return { requestId, outcome };
+}
+
+function pendingComposerDraft_sameRequestKey(
+  left: LifecycleRequestKey,
+  right: LifecycleRequestKey,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function pendingComposerDraft_rejectedOutcome(
+  expectation: DraftFlushExpectation,
+): DraftFlushOutcome {
+  return { ...expectation, status: "rejected" };
+}
+
+export async function pendingComposerDraft_aggregateCaptureHandlers(
+  request: PendingComposerDraftCaptureRequest,
+  handlers: ReadonlySet<PendingComposerDraftCaptureHandler>,
+): Promise<PendingComposerDraftCaptureResponse> {
+  if (handlers.size !== 1) return { requestId: request.requestId, status: "rejected" };
+  try {
+    const handler = handlers.values().next().value;
+    if (!handler) return { requestId: request.requestId, status: "rejected" };
+    const expectation = pendingComposerDraft_decodeExpectation(await handler(request));
+    if (
+      expectation.operationId !== request.operationId ||
+      !pendingComposerDraft_sameRequestKey(expectation.requestKey, request.requestKey) ||
+      expectation.windowId !== request.windowId
+    ) {
+      throw new TypeError("captured draft expectation does not match its request.");
+    }
+    return {
+      requestId: request.requestId,
+      status: "captured",
+      expectation,
+    };
+  } catch {
+    return { requestId: request.requestId, status: "rejected" };
+  }
+}
+
+export async function pendingComposerDraft_aggregateFlushHandlers(
+  request: PendingComposerDraftFlushRequest,
+  handlers: ReadonlySet<PendingComposerDraftFlushHandler>,
+): Promise<PendingComposerDraftFlushResponse> {
+  if (handlers.size !== 1) {
+    return {
+      requestId: request.requestId,
+      outcome: pendingComposerDraft_rejectedOutcome(request.expectation),
+    };
+  }
+  try {
+    const handler = handlers.values().next().value;
+    if (!handler) {
+      return {
+        requestId: request.requestId,
+        outcome: pendingComposerDraft_rejectedOutcome(request.expectation),
+      };
+    }
+    return {
+      requestId: request.requestId,
+      outcome: pendingComposerDraft_decodeOutcomeForExpectation(
+        await handler(request),
+        request.expectation,
+      ),
+    };
+  } catch {
+    return {
+      requestId: request.requestId,
+      outcome: pendingComposerDraft_rejectedOutcome(request.expectation),
+    };
+  }
+}
+
 export interface PiDesktopApi {
   platform: NodeJS.Platform;
   /** True when the window has no native title bar and the app draws its own. */
@@ -759,6 +1224,10 @@ export interface PiDesktopApi {
   archiveSession(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
   unarchiveSession(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
   markSessionRead(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
+  markAllThreadsRead(input: MarkAllThreadsReadInput): Promise<DesktopAppState>;
+  setFolderPreference(workspaceId: string, preference: FolderPreference): Promise<DesktopAppState>;
+  setAllThreadsSort(sort: AllThreadsSort): Promise<DesktopAppState>;
+  getEffectiveChildModelSettings(workspaceId: string): Promise<EffectiveChildModelSettings>;
   setSessionPinned(target: WorkspaceSessionTarget, pinned: boolean): Promise<DesktopAppState>;
   createSession(input: CreateSessionInput): Promise<DesktopAppState>;
   startThread(input: StartThreadInput): Promise<DesktopAppState>;
@@ -895,6 +1364,10 @@ export interface PiDesktopApi {
    * once the debounced draft has been saved. Main waits a bounded time for it.
    */
   onPendingComposerDraftFlush(handler: () => Promise<void>): () => void;
+  /** Captures the current bounded draft identity without writing it. */
+  onPendingComposerDraftCapture(handler: PendingComposerDraftCaptureHandler): () => void;
+  /** Persists one previously captured draft identity and preserves its typed result. */
+  onPendingComposerDraftFlushResult(handler: PendingComposerDraftFlushHandler): () => void;
   submitComposer(
     text: string,
     options?: { readonly deliverAs?: "steer" | "followUp" },
@@ -931,6 +1404,12 @@ export interface PiDesktopApi {
   toggleWindowMaximize(): Promise<void>;
   minimizeWindow(): void;
   closeWindow(): void;
+  getSupportDevelopment(): Promise<SupportDevelopmentState>;
+  openSupportDevelopment(optionId: SupportDevelopmentOptionId): Promise<void>;
+  dismissSupportDevelopment(choice: SupportDevelopmentDismissal): Promise<SupportDevelopmentState>;
+  getTelemetryConsentStatus(): Promise<TelemetryConsentIpcStatus>;
+  setTelemetryConsent(request: TelemetryConsentIpcUpdate): Promise<TelemetryConsentIpcStatus>;
+  onTelemetryConsentChanged(listener: (status: TelemetryConsentIpcStatus) => void): () => void;
   openExternal(url: string): Promise<void>;
   getThemeMode(): Promise<"system" | "light" | "dark">;
   getResolvedTheme(): Promise<"light" | "dark">;

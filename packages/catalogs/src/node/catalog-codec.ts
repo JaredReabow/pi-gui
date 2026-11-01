@@ -1,3 +1,4 @@
+import type { SessionTerminalRun } from "@pi-gui/session-driver";
 import { sessionKey } from "@pi-gui/session-driver";
 import type { WorkspaceCatalogEntry, SessionCatalogEntry, WorktreeCatalogEntry } from "../types.js";
 
@@ -9,6 +10,7 @@ export type CatalogFileState = {
   sessionFiles: Record<string, string>;
   /** stoppedReplyId by session key, kept apart from entries so no entry rewrite drops it. */
   stoppedReplies: Record<string, string>;
+  runs: Record<string, { runId: string; generation: number; terminalRun?: SessionTerminalRun }>;
 };
 
 export function createEmptyState(): CatalogFileState {
@@ -19,6 +21,7 @@ export function createEmptyState(): CatalogFileState {
     worktrees: [],
     sessionFiles: {},
     stoppedReplies: {},
+    runs: {},
   };
 }
 
@@ -42,7 +45,8 @@ export function parseState(raw: string, filePath: string): CatalogFileState {
     !isEntryArray(sessions, isSessionEntry) ||
     !isEntryArray(worktrees, isWorktreeEntry) ||
     !isStringRecord(sessionFiles) ||
-    !(parsed.stoppedReplies === undefined || isStringRecord(parsed.stoppedReplies))
+    !(parsed.stoppedReplies === undefined || isStringRecord(parsed.stoppedReplies)) ||
+    !(parsed.runs === undefined || isRunRecord(parsed.runs))
   ) {
     throw new Error(
       `Invalid catalog file contents in ${filePath}; original file was left unchanged.`,
@@ -51,6 +55,7 @@ export function parseState(raw: string, filePath: string): CatalogFileState {
 
   return {
     version: 2,
+    runs: parsed.runs === undefined ? {} : structuredClone(parsed.runs),
     workspaces: workspaces.map(cloneWorkspaceEntry),
     sessions: sessions.map(entryWithoutStoppedReply),
     worktrees: worktrees.map(cloneWorktreeEntry),
@@ -60,6 +65,33 @@ export function parseState(raw: string, filePath: string): CatalogFileState {
         ? stoppedRepliesFromEntries(sessions)
         : { ...parsed.stoppedReplies },
   };
+}
+
+/** Reject malformed or contradictory identity records without repairing the user's file. */
+function isRunRecord(value: unknown): value is CatalogFileState["runs"] {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((run) => {
+      if (
+        !isRecord(run) ||
+        typeof run.runId !== "string" ||
+        !run.runId ||
+        !Number.isSafeInteger(run.generation) ||
+        Number(run.generation) < 1
+      )
+        return false;
+      if (run.terminalRun === undefined) return true;
+      const terminal = run.terminalRun;
+      return (
+        isRecord(terminal) &&
+        terminal.runId === run.runId &&
+        terminal.generation === run.generation &&
+        hasStrings(terminal, ["nativeSessionId", "branchLeafId", "settledAt"]) &&
+        Number.isFinite(Date.parse(String(terminal.settledAt))) &&
+        ["completed", "stopped", "failed", "incomplete"].includes(String(terminal.outcome))
+      );
+    })
+  );
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -151,6 +183,7 @@ function stoppedRepliesFromEntries(
 export function entryWithoutStoppedReply(entry: SessionCatalogEntry): SessionCatalogEntry {
   const next = cloneSessionEntry(entry);
   delete next.stoppedReplyId;
+  delete next.terminalRun;
   return next;
 }
 

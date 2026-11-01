@@ -1,3 +1,23 @@
+import {
+  childSelection_decodeInitiatingOrigin,
+  type SessionInitiatingOrigin,
+} from "../../contracts/child-selection";
+import {
+  childSelection_decodeOrigin,
+  childSelection_decodeSelectedConfig,
+} from "../../contracts/child-selection";
+import {
+  sidebarPreferences_isFolder,
+  sidebarPreferences_isSort,
+  sidebarPreferences_decodeDurableActivityPreference,
+  type FolderPreference,
+  type AllThreadsSort,
+  type PersistedActivityIndicatorPreference,
+} from "../../contracts/sidebar-preferences";
+import {
+  projectIdentity_decodeAccentColors,
+  type ProjectAccentColor,
+} from "../../contracts/project-identity";
 import type {
   AppView,
   ExtensionCommandCompatibilityRecord,
@@ -22,7 +42,7 @@ import { decodeTaskWorkbenchTemplate, type TaskWorkbenchTemplate } from "../../c
 
 export interface PersistedUiState {
   readonly version?:
-    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19;
+    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20;
   readonly taskWorkbenchTemplatesBySession?: Record<string, TaskWorkbenchTemplate>;
   readonly selectedWorkspaceId?: string;
   readonly selectedSessionId?: string;
@@ -51,11 +71,17 @@ export interface PersistedUiState {
   readonly sidebarCollapsed?: boolean;
   readonly threadGrouping?: ThreadGrouping;
   readonly collapsedWorkspaceIds?: readonly string[];
+  readonly folderPreferencesByWorkspace?: Readonly<Record<string, FolderPreference>>;
+  readonly allThreadsSort?: AllThreadsSort;
+  readonly initiatingOriginBySession?: Readonly<Record<string, SessionInitiatingOrigin>>;
+  readonly createdAtBySession?: Readonly<Record<string, string>>;
   readonly allowMultiple?: boolean;
   readonly enableTransparency?: boolean;
   readonly themeMode?: ThemeMode;
   readonly themePresetId?: ThemePresetId;
   readonly orchestrationChildren?: readonly OrchestrationChildThread[];
+  readonly workspaceAccentColors?: Readonly<Record<string, ProjectAccentColor>>;
+  readonly activityIndicatorPreference?: PersistedActivityIndicatorPreference;
 }
 
 export interface LegacyPersistedUiState extends PersistedUiState {
@@ -127,6 +153,18 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
       ? candidate.threadGrouping
       : undefined,
     collapsedWorkspaceIds: toStringArray(candidate.collapsedWorkspaceIds),
+    folderPreferencesByWorkspace:
+      candidate.folderPreferencesByWorkspace as PersistedUiState["folderPreferencesByWorkspace"],
+    allThreadsSort: candidate.allThreadsSort as AllThreadsSort | undefined,
+    initiatingOriginBySession:
+      candidate.initiatingOriginBySession === undefined
+        ? undefined
+        : Object.fromEntries(
+            Object.entries(candidate.initiatingOriginBySession as Record<string, unknown>).map(
+              ([key, value]) => [key, childSelection_decodeInitiatingOrigin(value)],
+            ),
+          ),
+    createdAtBySession: toStringRecord(candidate.createdAtBySession),
     allowMultiple:
       typeof candidate.allowMultiple === "boolean" ? candidate.allowMultiple : undefined,
     enableTransparency:
@@ -134,6 +172,14 @@ export function decodePersistedUiState(parsed: unknown): LegacyPersistedUiState 
     themeMode: toThemeMode(candidate.themeMode),
     themePresetId: toThemePresetId(candidate.themePresetId),
     orchestrationChildren: toPersistedOrchestrationChildren(candidate.orchestrationChildren),
+    workspaceAccentColors:
+      candidate.workspaceAccentColors === undefined
+        ? undefined
+        : projectIdentity_decodeAccentColors(candidate.workspaceAccentColors),
+    activityIndicatorPreference:
+      candidate.activityIndicatorPreference === undefined
+        ? undefined
+        : sidebarPreferences_decodeDurableActivityPreference(candidate.activityIndicatorPreference),
     composerAttachmentsBySession: toObjectArrayRecord(candidate.composerAttachmentsBySession),
     transcripts: toObjectArrayRecord(candidate.transcripts),
   };
@@ -143,25 +189,30 @@ export async function writePersistedUiState(
   uiStateFilePath: string,
   payload: PersistedUiState,
 ): Promise<void> {
+  decodePersistedUiState(payload);
   const serialized = `${JSON.stringify(
     {
       ...payload,
-      version: 19,
+      version: 20,
     } satisfies PersistedUiState,
     null,
     2,
   )}\n`;
-  decodePersistedUiState(payload);
   await writeFileAtomicQueued(uiStateFilePath, serialized, decodePersistedUiState, {
     preserveExistingAs: (validated) => {
       const existing = validated as LegacyPersistedUiState;
-      if (existing.version === 19) return undefined;
+      if (existing.version === 20) return undefined;
       return join(
         dirname(uiStateFilePath),
         `${basename(uiStateFilePath, ".json")}.pre-workbench-v${existing.version ?? "legacy"}.${randomUUID()}.json`,
       );
     },
   });
+}
+
+/** Atomic JSON persistence entry point for other app-owned private stores. */
+export async function writeJsonAtomicForAppStore(filePath: string, value: unknown): Promise<void> {
+  await writeFileAtomicQueued(filePath, `${JSON.stringify(value)}\n`, (stored) => stored);
 }
 
 /** Layouts are per-task conveniences: one bad layout must not block the rest of saved UI state. */
@@ -193,9 +244,26 @@ function validateUiState(value: unknown): Record<string, unknown> {
   const fail = (field: string): never => {
     throw new Error(`Invalid ui-state field ${field}; original data was retained.`);
   };
+  if (
+    (Object.getPrototypeOf(root) !== Object.prototype && Object.getPrototypeOf(root) !== null) ||
+    Object.getOwnPropertySymbols(root).length > 0
+  ) {
+    fail("ui-state (expected a plain object with data properties)");
+  }
   const knownKeys = (record: Record<string, unknown>, keys: readonly string[], path: string) => {
     for (const key of Object.keys(record))
       if (!keys.includes(key)) fail(`${path}.${key} (unsupported field)`);
+  };
+  const optionalDataProperty = (
+    object: Record<string, unknown>,
+    key: string,
+  ): unknown | undefined => {
+    if (!Object.hasOwn(object, key)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      return fail(`${key} (expected an enumerable data property)`);
+    }
+    return descriptor.value;
   };
   knownKeys(
     root,
@@ -223,11 +291,17 @@ function validateUiState(value: unknown): Record<string, unknown> {
       "sidebarCollapsed",
       "threadGrouping",
       "collapsedWorkspaceIds",
+      "folderPreferencesByWorkspace",
+      "allThreadsSort",
+      "createdAtBySession",
+      "initiatingOriginBySession",
       "allowMultiple",
       "enableTransparency",
       "themeMode",
       "themePresetId",
       "orchestrationChildren",
+      "workspaceAccentColors",
+      "activityIndicatorPreference",
       "composerAttachmentsBySession",
       "transcripts",
     ],
@@ -280,8 +354,50 @@ function validateUiState(value: unknown): Record<string, unknown> {
     optional(root, key, boolean);
   optional(root, "activeView", (v) => toAppView(v) !== undefined);
   optional(root, "threadGrouping", isThreadGrouping);
+  optional(root, "allThreadsSort", sidebarPreferences_isSort);
+  optional(root, "folderPreferencesByWorkspace", (v) => {
+    const r = objectRecord(v);
+    return !!r && Object.values(r).every(sidebarPreferences_isFolder);
+  });
+  optional(root, "initiatingOriginBySession", (v) => {
+    const r = objectRecord(v);
+    if (!r) return false;
+    try {
+      for (const value of Object.values(r)) childSelection_decodeInitiatingOrigin(value);
+    } catch {
+      return false;
+    }
+    return true;
+  });
+  optional(root, "createdAtBySession", (v) => {
+    const r = objectRecord(v);
+    return (
+      !!r &&
+      Object.values(r).every((at) => typeof at === "string" && Number.isFinite(Date.parse(at)))
+    );
+  });
   optional(root, "themeMode", isThemeMode);
   optional(root, "themePresetId", isThemePresetId);
+  const workspaceAccentColors = optionalDataProperty(root, "workspaceAccentColors");
+  if (workspaceAccentColors !== undefined) {
+    if (typeof root.version === "number" && root.version < 20)
+      fail("workspaceAccentColors before v20");
+    try {
+      projectIdentity_decodeAccentColors(workspaceAccentColors);
+    } catch {
+      fail("workspaceAccentColors");
+    }
+  }
+  const activityIndicatorPreference = optionalDataProperty(root, "activityIndicatorPreference");
+  if (activityIndicatorPreference !== undefined) {
+    if (typeof root.version === "number" && root.version < 20)
+      fail("activityIndicatorPreference before v20");
+    try {
+      sidebarPreferences_decodeDurableActivityPreference(activityIndicatorPreference);
+    } catch {
+      fail("activityIndicatorPreference");
+    }
+  }
   optional(root, "modelSettingsScopeMode", (v) => v === "per-repo" || v === "app-global");
   if (root.notificationPreferences !== undefined) {
     const preferences =
@@ -376,6 +492,8 @@ function validateUiState(value: unknown): Record<string, unknown> {
         [
           "id",
           "sourceToolCallId",
+          "origin",
+          "selectedConfig",
           "parentWorkspaceId",
           "parentSessionId",
           "childWorkspaceId",
@@ -393,6 +511,17 @@ function validateUiState(value: unknown): Record<string, unknown> {
         path,
       );
       if (toPersistedOrchestrationChildren([child])?.length !== 1) fail(path);
+      if (record.origin !== undefined) {
+        const origin = childSelection_decodeOrigin(record.origin);
+        if (
+          origin.parentWorkspaceId !== record.parentWorkspaceId ||
+          origin.parentSessionId !== record.parentSessionId ||
+          origin.sourceToolCallId !== record.sourceToolCallId
+        )
+          fail(`${path}.origin`);
+      }
+      if (record.selectedConfig !== undefined)
+        childSelection_decodeSelectedConfig(record.selectedConfig);
       for (const key of [
         "id",
         "sourceToolCallId",
@@ -533,7 +662,7 @@ function toAppView(value: unknown): AppView | undefined {
 }
 
 function toPersistedVersion(value: unknown): NonNullable<PersistedUiState["version"]> | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 19
+  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 20
     ? (value as NonNullable<PersistedUiState["version"]>)
     : undefined;
 }
@@ -604,6 +733,12 @@ function toPersistedOrchestrationChildren(value: unknown): OrchestrationChildThr
       {
         id,
         ...(sourceToolCallId ? { sourceToolCallId } : {}),
+        ...(candidate.origin === undefined
+          ? {}
+          : { origin: childSelection_decodeOrigin(candidate.origin) }),
+        ...(candidate.selectedConfig === undefined
+          ? {}
+          : { selectedConfig: childSelection_decodeSelectedConfig(candidate.selectedConfig) }),
         parentWorkspaceId,
         parentSessionId,
         childWorkspaceId,
@@ -910,6 +1045,7 @@ function toOptionalOrchestrationStatus(
   return value === "queued" ||
     value === "waiting" ||
     value === "complete" ||
+    value === "cancelled" ||
     value === "failed" ||
     value === "running"
     ? value

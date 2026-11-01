@@ -204,3 +204,34 @@ await test("a stopped reply reads as stopped only while it is still the newest r
   branch.push({ type: "message", id: "a2", message: reply });
   assert.equal(sessionRunOutcome({ session, stoppedReplyId: "a1" }), "completed");
 });
+
+await test("identified terminal outcome handles no-assistant cancellation and binds exact native branch", () => {
+  const terminalRun = {
+    runId: "run",
+    generation: 1,
+    nativeSessionId: "native",
+    branchLeafId: "input",
+    settledAt: "2026-10-31T00:00:00Z",
+    outcome: "stopped" as const,
+  };
+  const session = {
+    sessionId: "native",
+    messages: [{ role: "user", content: "Work" }],
+    sessionManager: {
+      getBranch: () => [{ id: "input", type: "message", message: { role: "user" } }],
+    },
+  };
+  assert.equal(sessionRunOutcome({ session, terminalRun }), "stopped");
+  assert.equal(sessionRunOutcome({ session }), undefined, "idle and no assistant prove nothing");
+  assert.equal(
+    sessionRunOutcome({ session: { ...session, sessionId: "other" }, terminalRun }),
+    undefined,
+  );
+  assert.equal(
+    sessionRunOutcome({
+      session: { ...session, sessionManager: { getBranch: () => [{ id: "later-input" }] } },
+      terminalRun,
+    }),
+    undefined,
+  );
+});

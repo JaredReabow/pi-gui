@@ -1,3 +1,31 @@
+import type {
+  SessionInitiatingOrigin,
+  EffectiveChildModelSettings,
+} from "../../contracts/child-selection";
+import {
+  sidebarPreferences_decodeActivityStyle,
+  sidebarPreferences_decodeFolder,
+  sidebarPreferences_decodeSort,
+  sidebarPreferences_decodeMarkRead,
+  sidebarPreferences_decideLegacyActivityMigration,
+  sidebarPreferences_provisionalActivityPreference,
+  type ActivityIndicatorPreferenceSnapshot,
+  type ActivityIndicatorStyle,
+  type FolderPreference,
+  type AllThreadsSort,
+  type MarkAllThreadsReadInput,
+  type PersistedActivityIndicatorPreference,
+} from "../../contracts/sidebar-preferences";
+import {
+  projectIdentity_assignMissingAccents,
+  projectIdentity_decodeAccentColors,
+  projectIdentity_decodeColor,
+  projectIdentity_decodeSetAccent,
+  projectIdentity_effectiveByWorkspace,
+  type ProjectAccentColor,
+  type ProjectIdentityWorkspace,
+  type SetProjectAccentColorInput,
+} from "../../contracts/project-identity";
 import { JsonCatalogStore } from "@pi-gui/catalogs/node";
 import { sessionKey } from "@pi-gui/session-driver";
 import type { ExtensionFlagValues, SessionSchemaInfo } from "@pi-gui/session-driver";
@@ -196,6 +224,12 @@ export interface DesktopAppStoreOptions {
     workspace: WorkspaceRef,
     options: GenerateThreadTitleOptions,
   ) => Promise<string | null | undefined>;
+  readonly onUserActivity?: () => void;
+}
+
+export interface LegacyActivityMigrationResult {
+  readonly status: "applied" | "already-set" | "no-legacy";
+  readonly state: DesktopAppState;
 }
 
 export class DesktopAppStore {
@@ -205,6 +239,10 @@ export class DesktopAppStore {
   private publishRevision = 1;
   /** Serialize full-state refreshes so stale async builders cannot publish over newer state. */
   private refreshStateQueue: Promise<void> = Promise.resolve();
+  /** Serialize appearance intent so migration and user choices have one deterministic order. */
+  private appearanceOperationQueue: Promise<void> = Promise.resolve();
+  /** Serialize every full UI-state payload so an unrelated save cannot overtake appearance. */
+  private uiPersistenceQueue: Promise<void> = Promise.resolve();
   private readonly selectedTranscriptListeners = new Set<SelectedTranscriptListener>();
   private readonly extensionUiListeners = new Set<(update: SessionExtensionUiUpdate) => void>();
   private readonly sessionEventListeners = new Set<SessionEventListener>();
@@ -268,6 +306,8 @@ export class DesktopAppStore {
     string,
     Map<string, ExtensionCommandCompatibilityRecord>
   >();
+  private workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>> = Object.freeze({});
+  private activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined;
   private readonly pendingRuntimeCommandsBySession = new Map<
     string,
     PendingRuntimeCommandExecution
@@ -276,6 +316,7 @@ export class DesktopAppStore {
   private readonly initialWorkspacePaths: readonly string[];
   private readonly getWindow: () => BrowserWindow | null;
   private readonly shouldKeepSessionDialogs: (sessionRef: SessionRef) => boolean;
+  private readonly onUserActivity: () => void;
   private composerDraftSyncTarget: SessionRef | undefined;
   private composerDraftProjectionNonce = 0;
   private persistUiStateTimer: NodeJS.Timeout | undefined;
@@ -325,6 +366,7 @@ export class DesktopAppStore {
     this.initialWorkspacePaths = options.initialWorkspacePaths;
     this.getWindow = options.getWindow ?? (() => null);
     this.shouldKeepSessionDialogs = options.shouldKeepSessionDialogs ?? (() => false);
+    this.onUserActivity = options.onUserActivity ?? (() => undefined);
 
     this.conversationOwner = createConversationOwner({
       driver: this.driver,
@@ -447,8 +489,10 @@ export class DesktopAppStore {
           selectedSessionId: sessionRef.sessionId,
         };
       },
+      recordSessionCreation: (ref) => this.recordCreatedSession(ref, "human"),
       seedSession: (snapshot) => {
         const key = sessionKey(snapshot.ref);
+        this.recordCreatedSession(snapshot.ref, "human");
         this.sessionState.transcriptCache.set(key, []);
         this.sessionState.loadedTranscriptKeys.add(key);
         this.updateSessionConfig(snapshot.ref, snapshot.config);
@@ -517,9 +561,12 @@ export class DesktopAppStore {
       subscribeToSessionEvents: (listener) => this.subscribeToSessionEvents(listener),
       updateSessionConfig: (sessionRef, config) => this.updateSessionConfig(sessionRef, config),
       buildCreateSessionOptions: (workspaceId) => this.buildCreateSessionOptions(workspaceId),
+      getEffectiveChildModelSettings: (workspaceId) =>
+        this.getEffectiveChildModelSettings(workspaceId),
       getQueuedComposerMessages: (sessionRef) => this.getQueuedComposerMessages(sessionRef),
       seedSession: (snapshot) => {
         const key = sessionKey(snapshot.ref);
+        this.recordCreatedSession(snapshot.ref, "tool");
         this.sessionState.transcriptCache.set(key, []);
         this.sessionState.loadedTranscriptKeys.add(key);
         this.updateSessionConfig(snapshot.ref, snapshot.config);
@@ -571,6 +618,7 @@ export class DesktopAppStore {
       createForegroundSession: (input) => this.workspaceOwner.createSession(input),
       seedSession: (snapshot) => {
         const key = sessionKey(snapshot.ref);
+        this.recordCreatedSession(snapshot.ref, "scheduled");
         this.sessionState.transcriptCache.set(key, []);
         this.sessionState.loadedTranscriptKeys.add(key);
         this.updateSessionConfig(snapshot.ref, snapshot.config);
@@ -599,6 +647,83 @@ export class DesktopAppStore {
   async getState(): Promise<DesktopAppState> {
     await this.initialize();
     return structuredClone(this.state);
+  }
+
+  async setProjectAccentColor(input: SetProjectAccentColorInput): Promise<DesktopAppState> {
+    const decoded = projectIdentity_decodeSetAccent(input);
+    await this.initialize();
+    this.requireAppearancePersistence();
+    return this.enqueueAppearanceOperation(async () => {
+      this.requireAppearancePersistence();
+      if (!this.state.workspaces.some((workspace) => workspace.id === decoded.workspaceId)) {
+        throw new Error(`Unknown workspace: ${decoded.workspaceId}`);
+      }
+      const projectId =
+        resolveRepoWorkspaceId(this.state.workspaces, decoded.workspaceId) ?? decoded.workspaceId;
+      const color = projectIdentity_decodeColor(decoded.color);
+      if (this.workspaceAccentColors[projectId] === color) {
+        return structuredClone(this.state);
+      }
+      const entries: [string, ProjectAccentColor][] = Object.entries(this.workspaceAccentColors);
+      entries.push([projectId, color]);
+      const workspaceAccentColors = Object.freeze(Object.fromEntries(entries));
+      await this.commitAppearance(
+        workspaceAccentColors,
+        this.activityIndicatorPreference,
+        this.state.workspaces,
+      );
+      return this.emit();
+    });
+  }
+
+  async setActivityIndicatorStyle(style: ActivityIndicatorStyle): Promise<DesktopAppState> {
+    const decoded = sidebarPreferences_decodeActivityStyle(style);
+    await this.initialize();
+    this.requireAppearancePersistence();
+    return this.enqueueAppearanceOperation(async () => {
+      this.requireAppearancePersistence();
+      if (
+        this.activityIndicatorPreference?.style === decoded &&
+        this.activityIndicatorPreference.source === "user"
+      ) {
+        return structuredClone(this.state);
+      }
+      const preference: PersistedActivityIndicatorPreference = Object.freeze({
+        style: decoded,
+        source: "user",
+      });
+      await this.commitAppearance(this.workspaceAccentColors, preference, this.state.workspaces);
+      return this.emit();
+    });
+  }
+
+  async migrateLegacyActivityIndicatorStyle(
+    legacyValue: unknown,
+  ): Promise<LegacyActivityMigrationResult> {
+    await this.initialize();
+    this.requireAppearancePersistence();
+    return this.enqueueAppearanceOperation(async () => {
+      this.requireAppearancePersistence();
+      const decision = sidebarPreferences_decideLegacyActivityMigration(
+        this.activityIndicatorPreference,
+        legacyValue,
+      );
+      if (decision.status !== "applied") {
+        return {
+          status: decision.status,
+          state: structuredClone(this.state),
+        };
+      }
+      await this.commitAppearance(
+        this.workspaceAccentColors,
+        decision.preference,
+        this.state.workspaces,
+      );
+      return {
+        status: decision.status,
+        state: this.emit(),
+      };
+    });
   }
 
   async getTaskWorkbenchTemplate(target: SessionRef): Promise<TaskWorkbenchTemplate | null> {
@@ -780,6 +905,7 @@ export class DesktopAppStore {
       this.persistUiStateTimer = undefined;
     }
 
+    await this.appearanceOperationQueue;
     await this.persistUiState();
     await this.persistScheduledTasks();
   }
@@ -1035,6 +1161,72 @@ export class DesktopAppStore {
     };
     await this.persistUiState();
     return this.emit();
+  }
+
+  /** Mark only explicit existing targets; one persistence operation and no selection/transcript work. */
+  async markAllThreadsRead(input: MarkAllThreadsReadInput): Promise<DesktopAppState> {
+    const { targets } = sidebarPreferences_decodeMarkRead(input);
+    await this.initialize();
+    // Validate the entire batch before changing any read marker.
+    if (targets.some((target) => !this.sessionFromState(toSessionRef(target)))) {
+      throw new Error("Unknown session in mark-all-read targets");
+    }
+    let changed = false;
+    for (const target of targets) changed = this.markSessionViewed(toSessionRef(target)) || changed;
+    if (!changed) return structuredClone(this.state);
+    await this.persistUiState();
+    return this.emit();
+  }
+
+  async setFolderPreference(
+    workspaceId: string,
+    preference: FolderPreference,
+  ): Promise<DesktopAppState> {
+    const validated = sidebarPreferences_decodeFolder(preference);
+    await this.initialize();
+    if (!this.workspaceRefFromState(workspaceId))
+      throw new Error(`Unknown workspace: ${workspaceId}`);
+    this.state = {
+      ...this.state,
+      folderPreferencesByWorkspace: {
+        ...this.state.folderPreferencesByWorkspace,
+        [workspaceId]: validated,
+      },
+    };
+    await this.persistUiState();
+    return this.emit();
+  }
+
+  async setAllThreadsSort(sort: AllThreadsSort): Promise<DesktopAppState> {
+    const validated = sidebarPreferences_decodeSort(sort);
+    await this.initialize();
+    this.state = { ...this.state, allThreadsSort: validated };
+    await this.persistUiState();
+    return this.emit();
+  }
+
+  /** Reads runtime-owner decisions without transferring provider authentication or runtime objects. */
+  async getEffectiveChildModelSettings(workspaceId: string): Promise<EffectiveChildModelSettings> {
+    await this.initialize();
+    if (!this.workspaceRefFromState(workspaceId))
+      throw new Error(`Unknown workspace: ${workspaceId}`);
+    await this.ensureRuntimeLoaded(workspaceId);
+    const runtime = (await this.serializeRuntimeStateForCurrentWorkspaces())[workspaceId];
+    const settings = runtime?.settings;
+    return {
+      policySource: this.state.modelSettingsScopeMode,
+      defaultProvider: settings?.defaultProvider,
+      defaultModelId: settings?.defaultModelId,
+      defaultThinkingLevel: settings?.defaultThinkingLevel,
+      models:
+        runtime?.models.map((model) => ({
+          provider: model.providerId,
+          modelId: model.modelId,
+          available: model.available,
+          reasoning: model.reasoning,
+          scope: model.scope,
+        })) ?? [],
+    };
   }
 
   async setSessionPinned(
@@ -2247,7 +2439,23 @@ export class DesktopAppStore {
     }
   }
 
+  /** Only trusted host creation callbacks call this; imported/legacy sessions are never stamped. */
+  private recordCreatedSession(ref: SessionRef, kind: SessionInitiatingOrigin["kind"]): void {
+    const key = sessionKey(ref);
+    this.sessionState.createdAtBySession.set(key, new Date().toISOString());
+    this.sessionState.initiatingOriginBySession.set(key, { kind, source: "desktop-host" });
+    this.schedulePersistUiState();
+  }
+
   private restorePersistedUiState(persisted: LegacyPersistedUiState): void {
+    this.workspaceAccentColors = persisted.workspaceAccentColors ?? Object.freeze({});
+    this.activityIndicatorPreference = persisted.activityIndicatorPreference;
+    this.sessionState.initiatingOriginBySession.clear();
+    for (const [key, origin] of Object.entries(persisted.initiatingOriginBySession ?? {}))
+      this.sessionState.initiatingOriginBySession.set(key, origin);
+    this.sessionState.createdAtBySession.clear();
+    for (const [key, value] of Object.entries(persisted.createdAtBySession ?? {}))
+      this.sessionState.createdAtBySession.set(key, value);
     this.disabledBuiltinExtensions.clear();
     for (const name of persisted.disabledBuiltinExtensions ?? []) {
       this.disabledBuiltinExtensions.add(name);
@@ -2280,6 +2488,9 @@ export class DesktopAppStore {
       sidebarCollapsed: persisted.sidebarCollapsed ?? this.state.sidebarCollapsed,
       threadGrouping: persisted.threadGrouping ?? "time",
       collapsedWorkspaceIds: persisted.collapsedWorkspaceIds ?? [],
+      folderPreferencesByWorkspace: persisted.folderPreferencesByWorkspace,
+      allThreadsSort: persisted.allThreadsSort,
+      createdAtBySession: persisted.createdAtBySession,
       enableTransparency: persisted.enableTransparency ?? this.state.enableTransparency,
       ...this.orchestrationChildrenState(persisted.orchestrationChildren ?? []),
     };
@@ -2540,6 +2751,7 @@ export class DesktopAppStore {
         this.sessionState.pinnedSessionOrder,
       );
       this.sessionState.pinnedSessionOrder = [...pinnedSessionOrder];
+      const workspaceAccentColors = await this.ensureProjectAccentDefaults(workspaces);
 
       // Refreshes run outside the window action queue (a send refreshes when its
       // turn ends), so a thread switch can land while this one awaits. That
@@ -2562,9 +2774,26 @@ export class DesktopAppStore {
         selection.sessionId,
         draftOptions,
       );
+      const sidebarAppearance = this.buildSidebarAppearance(
+        workspaces,
+        workspaceAccentColors,
+        this.activityIndicatorPreference,
+      );
       this.state = {
         ...this.state,
-        workspaces,
+        workspaces: workspaces.map((workspace) => ({
+          ...workspace,
+          sessions: workspace.sessions.map((session) => ({
+            ...session,
+            initiatingOrigin: this.sessionState.initiatingOriginBySession.get(
+              sessionKey({ workspaceId: workspace.id, sessionId: session.id }),
+            ),
+            createdAt: this.sessionState.createdAtBySession.get(
+              sessionKey({ workspaceId: workspace.id, sessionId: session.id }),
+            ),
+          })),
+        })),
+        createdAtBySession: mapToRecord(this.sessionState.createdAtBySession),
         worktreesByWorkspace,
         selectedWorkspaceId: selection.workspaceId,
         selectedSessionId: selection.sessionId,
@@ -2582,6 +2811,7 @@ export class DesktopAppStore {
         lastInteractedAtBySession: mapToRecord(this.sessionState.lastInteractedAtBySession),
         pinnedAtBySession: mapToRecord(this.sessionState.pinnedAtBySession),
         pinnedSessionOrder,
+        sidebarAppearance,
         workspaceOrder: this.state.workspaceOrder,
         collapsedWorkspaceIds: this.state.collapsedWorkspaceIds.filter((id) =>
           liveWorkspaceIds.has(id),
@@ -4099,15 +4329,113 @@ export class DesktopAppStore {
     return readPersistedUiState(this.uiStateFilePath);
   }
 
-  async persistUiState(): Promise<void> {
-    if (this.persistUiStateTimer) {
-      clearTimeout(this.persistUiStateTimer);
-      this.persistUiStateTimer = undefined;
-    }
+  private requireAppearancePersistence(): void {
     if (this.persistenceReadiness !== "ready") {
-      return;
+      throw new Error(
+        "Saved UI state is unavailable; repair or restore it before changing appearance.",
+      );
     }
-    const payload: PersistedUiState = {
+  }
+
+  private enqueueAppearanceOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.appearanceOperationQueue.catch(() => undefined).then(operation);
+    this.appearanceOperationQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private enqueueUiPersistence(operation: () => Promise<void>): Promise<void> {
+    const next = this.uiPersistenceQueue.catch(() => undefined).then(operation);
+    this.uiPersistenceQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  private async commitAppearance(
+    workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>>,
+    activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined,
+    workspaces: readonly WorkspaceRecord[],
+  ): Promise<void> {
+    const committedColors = projectIdentity_decodeAccentColors(workspaceAccentColors);
+    await this.enqueueUiPersistence(() =>
+      this.persistUiStateNow(committedColors, activityIndicatorPreference),
+    );
+    this.workspaceAccentColors = committedColors;
+    this.activityIndicatorPreference = activityIndicatorPreference;
+    const sidebarAppearance = this.buildSidebarAppearance(
+      workspaces,
+      committedColors,
+      activityIndicatorPreference,
+    );
+    this.state = {
+      ...this.state,
+      sidebarAppearance,
+    };
+  }
+
+  private appearanceWorkspaceInputs(
+    workspaces: readonly WorkspaceRecord[],
+  ): readonly ProjectIdentityWorkspace[] {
+    return workspaces.map((workspace) => ({
+      id: workspace.id,
+      path: workspace.path,
+      ...(workspace.rootWorkspaceId === undefined
+        ? {}
+        : { rootWorkspaceId: workspace.rootWorkspaceId }),
+    }));
+  }
+
+  private buildSidebarAppearance(
+    workspaces: readonly WorkspaceRecord[],
+    workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>> = this
+      .workspaceAccentColors,
+    activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined = this
+      .activityIndicatorPreference,
+  ): NonNullable<DesktopAppState["sidebarAppearance"]> {
+    const activity =
+      activityIndicatorPreference ?? sidebarPreferences_provisionalActivityPreference;
+    const activityIndicatorPreferenceSnapshot: ActivityIndicatorPreferenceSnapshot = Object.freeze({
+      style: activity.style,
+      source: activity.source,
+    });
+    const projectByWorkspaceId = projectIdentity_effectiveByWorkspace(
+      workspaceAccentColors,
+      this.appearanceWorkspaceInputs(workspaces),
+    );
+    return Object.freeze({
+      projectByWorkspaceId,
+      activityIndicatorPreference: activityIndicatorPreferenceSnapshot,
+    });
+  }
+
+  private async ensureProjectAccentDefaults(
+    workspaces: readonly WorkspaceRecord[],
+  ): Promise<Readonly<Record<string, ProjectAccentColor>>> {
+    return this.enqueueAppearanceOperation(async () => {
+      this.requireAppearancePersistence();
+      const next = projectIdentity_assignMissingAccents(
+        this.workspaceAccentColors,
+        this.appearanceWorkspaceInputs(workspaces),
+      );
+      if (accentColorMapsEqual(next, this.workspaceAccentColors)) {
+        return this.workspaceAccentColors;
+      }
+      await this.commitAppearance(next, this.activityIndicatorPreference, workspaces);
+      return this.workspaceAccentColors;
+    });
+  }
+
+  private buildPersistedUiState(
+    workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>> = this
+      .workspaceAccentColors,
+    activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined = this
+      .activityIndicatorPreference,
+  ): PersistedUiState {
+    return {
       taskWorkbenchTemplatesBySession: Object.fromEntries(this.taskWorkbenchTemplatesBySession),
       selectedWorkspaceId: this.state.selectedWorkspaceId || undefined,
       selectedSessionId: this.state.selectedSessionId || undefined,
@@ -4141,15 +4469,59 @@ export class DesktopAppStore {
       themePresetId: this.state.themePresetId,
       sidebarCollapsed: this.state.sidebarCollapsed || undefined,
       threadGrouping: this.state.threadGrouping,
+      folderPreferencesByWorkspace: this.state.folderPreferencesByWorkspace,
+      allThreadsSort: this.state.allThreadsSort,
+      initiatingOriginBySession: mapToRecord(this.sessionState.initiatingOriginBySession),
+      createdAtBySession: mapToRecord(this.sessionState.createdAtBySession),
       collapsedWorkspaceIds:
         this.state.collapsedWorkspaceIds.length > 0 ? this.state.collapsedWorkspaceIds : undefined,
       enableTransparency: this.state.enableTransparency,
       orchestrationChildren: orchestration.toPersistedOrchestrationChildren(
         this.state.orchestrationChildren,
       ),
+      workspaceAccentColors:
+        Object.keys(workspaceAccentColors).length > 0 ? workspaceAccentColors : undefined,
+      activityIndicatorPreference: activityIndicatorPreference,
     };
+  }
 
-    await writePersistedUiState(this.uiStateFilePath, payload);
+  private async persistUiStateNow(
+    workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>> = this
+      .workspaceAccentColors,
+    activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined = this
+      .activityIndicatorPreference,
+  ): Promise<void> {
+    await writePersistedUiState(
+      this.uiStateFilePath,
+      this.buildPersistedUiState(workspaceAccentColors, activityIndicatorPreference),
+    );
+  }
+
+  private currentPersistedAppearance(): {
+    readonly workspaceAccentColors: Readonly<Record<string, ProjectAccentColor>>;
+    readonly activityIndicatorPreference: PersistedActivityIndicatorPreference | undefined;
+  } {
+    return {
+      workspaceAccentColors: this.workspaceAccentColors,
+      activityIndicatorPreference: this.activityIndicatorPreference,
+    };
+  }
+
+  async persistUiState(): Promise<void> {
+    if (this.persistUiStateTimer) {
+      clearTimeout(this.persistUiStateTimer);
+      this.persistUiStateTimer = undefined;
+    }
+    if (this.persistenceReadiness !== "ready") {
+      return;
+    }
+    await this.enqueueUiPersistence(() => {
+      const appearance = this.currentPersistedAppearance();
+      return this.persistUiStateNow(
+        appearance.workspaceAccentColors,
+        appearance.activityIndicatorPreference,
+      );
+    });
   }
 
   async persistComposerAttachments(
@@ -4533,6 +4905,7 @@ export class DesktopAppStore {
     }
 
     this.sessionState.lastInteractedAtBySession.set(key, at);
+    this.onUserActivity();
     this.state = {
       ...this.state,
       workspaces: this.state.workspaces.map((workspace) =>
@@ -5044,6 +5417,18 @@ function modelSettingsEqual(left: ModelSettingsSnapshot, right: ModelSettingsSna
 
 function samePatterns(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((pattern, index) => pattern === right[index]);
+}
+
+function accentColorMapsEqual(
+  left: Readonly<Record<string, ProjectAccentColor>>,
+  right: Readonly<Record<string, ProjectAccentColor>>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => Object.hasOwn(right, key) && left[key] === right[key])
+  );
 }
 
 function mergeEnabledModelPatterns(

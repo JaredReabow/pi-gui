@@ -98,6 +98,94 @@ test("renders markdown formatting in assistant responses", async () => {
     await expect(messageRow.locator("pre code")).toContainText(
       'const rendered: string = "markdown";',
     );
+    await window.evaluate(async () => {
+      await globalThis.window.piApp?.setThemePresetId("tokyo-night");
+    });
+    await expect
+      .poll(() => window.evaluate(() => document.documentElement.dataset.themePreset))
+      .toBe("tokyo-night");
+    for (const themeMode of ["dark", "light"] as const) {
+      await window.evaluate((mode) => globalThis.window.piApp?.setThemeMode(mode), themeMode);
+      await expect
+        .poll(() => window.evaluate(() => document.documentElement.classList.contains("dark")))
+        .toBe(themeMode === "dark");
+      await expect
+        .poll(() =>
+          messageRow.evaluate((element) => {
+            const minimumContrast = (selector: string): number => {
+              const target = element.querySelector<HTMLElement>(selector);
+              const main = document.querySelector<HTMLElement>(".main");
+              if (!target || !main) throw new Error(`Missing ${selector} or main surface`);
+
+              const parse = (value: string): [number, number, number, number] => {
+                const channels = value.match(/[\d.]+/g)?.map(Number);
+                if (!channels || channels.length < 3)
+                  throw new Error(`Unsupported colour ${value}`);
+                return [
+                  channels[0]!,
+                  channels[1]!,
+                  channels[2]!,
+                  channels.length > 3 ? channels[3]! : 1,
+                ];
+              };
+              const luminance = ([red, green, blue]: [number, number, number, number]): number => {
+                const channel = (value: number): number => {
+                  const normalized = value / 255;
+                  return normalized <= 0.03928
+                    ? normalized / 12.92
+                    : ((normalized + 0.055) / 1.055) ** 2.4;
+                };
+                return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+              };
+
+              const foreground = parse(getComputedStyle(target).color);
+              const background = parse(getComputedStyle(target).backgroundColor);
+              const underlay = parse(getComputedStyle(main).backgroundColor);
+              const effectiveBackground: [number, number, number, number] = [
+                background[0] * background[3] + underlay[0] * (1 - background[3]),
+                background[1] * background[3] + underlay[1] * (1 - background[3]),
+                background[2] * background[3] + underlay[2] * (1 - background[3]),
+                1,
+              ];
+              const foregroundLuminance = luminance(foreground);
+              const backgroundLuminance = luminance(effectiveBackground);
+              return (
+                (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+                (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+              );
+            };
+
+            return {
+              codeBlockPass: minimumContrast("pre") >= 4.5,
+              inlineCodePass: minimumContrast(":not(pre) > code") >= 4.5,
+            };
+          }),
+        )
+        .toEqual({
+          codeBlockPass: true,
+          inlineCodePass: true,
+        });
+    }
+
+    await window.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text: string) => {
+            (window as Window & { __markdownCopyText?: string }).__markdownCopyText = text;
+          },
+        },
+      });
+    });
+    await messageRow.getByTestId("copy-code").click();
+    await expect(messageRow.getByTestId("copy-code")).toHaveAttribute("data-copy-state", "success");
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () => (window as Window & { __markdownCopyText?: string }).__markdownCopyText ?? null,
+        ),
+      )
+      .toBe('const rendered: string = "markdown";');
 
     const issueLink = messageRow.getByRole("link", { name: "issue" });
     await expect(issueLink).toHaveAttribute(

@@ -20,7 +20,7 @@ import type {
   ExtensionContext,
   ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
-import { readFile, stat } from "node:fs/promises";
+import { appendFile, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { augmentPosixPath } from "../scripts/augment-path.cjs";
@@ -60,6 +60,20 @@ import { EditorService } from "./platform/editors/editor-service";
 import { windowBackgroundFor } from "../contracts/theme";
 import { TerminalService } from "./platform/terminal-service";
 import type { DesktopAppState, DesktopAppViewState } from "../contracts/desktop-state";
+import { distributionCreateCandidateProfile } from "@pi-gui/distribution-config";
+import { distributionResolveDataPaths } from "@pi-gui/distribution-config/node";
+import { supportResolveOptionUrl } from "@pi-gui/distribution-support";
+import { createDistributionTelemetryRuntime } from "./distribution/telemetry-runtime";
+import type { DistributionTelemetryIntegration } from "./distribution/telemetry-integration";
+import {
+  telemetryConsentService_initialize,
+  type TelemetryConsentService,
+} from "./distribution/telemetry-consent-service";
+import { TelemetryConsentFileStore } from "./persistence/telemetry-consent-store";
+import {
+  SupportService,
+  supportService_createFilePersistence,
+} from "./distribution/support-service";
 import {
   desktopCommands,
   desktopIpc,
@@ -68,6 +82,7 @@ import {
   isCloseFocusedSurfaceShortcut,
   getSidePanelTabCommand,
   platformShortcutModifier,
+  telemetryConsentIpc_decodeStatus,
   type CustomProviderProbeInput,
   type CustomProviderProbeResult,
 } from "../contracts/ipc";
@@ -99,6 +114,8 @@ const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 const appTestMode = resolveAppTestMode(process.env.PI_APP_TEST_MODE);
 const windowTestMode = appTestMode ?? "foreground";
 const devReloadMarkersEnabled = process.env.PI_APP_DEV_RELOAD_MARKERS === "1";
+const telemetryBridgeFrameProbe =
+  Boolean(appTestMode) && !app.isPackaged && process.env.PI_APP_TEST_TELEMETRY_BRIDGE === "1";
 const TURN_CAPTURE_BACKSTOP_MS = 10_000;
 let store: DesktopAppStore;
 let extensionViewOwner: DesktopExtensionViewOwner | undefined;
@@ -111,6 +128,40 @@ let notificationPermissionService: NotificationPermissionService | undefined;
 let terminalService: TerminalService | undefined;
 let integratedTerminalShell = "";
 let applicationRelaunchRequested = false;
+let distributionTelemetry: DistributionTelemetryIntegration | null = null;
+let telemetryConsentService: TelemetryConsentService | null = null;
+let stopDistributionTelemetryEvents: (() => void) | undefined;
+let stopTelemetryConsentStatusEvents: (() => void) | undefined;
+let supportOpenTestFailureConsumed = false;
+
+async function composeTelemetryConsentService(
+  integration: DistributionTelemetryIntegration,
+  userDataDir: string,
+): Promise<TelemetryConsentService> {
+  const store = new TelemetryConsentFileStore(userDataDir);
+  let service = await telemetryConsentService_initialize(integration, store);
+  const initial = service.telemetry_consent_get();
+  const owner = integration.consentMetadata();
+  const usageAllowed = initial.effective.usage.value === "allowed";
+  const crashAllowed = initial.effective.crash.value === "allowed";
+  if ((owner.ownerConsent.usage && !usageAllowed) || (owner.ownerConsent.crash && !crashAllowed)) {
+    // Engine state without matching current provenance is informative but never
+    // authorizes capture. Revoke stale raw grants before any session or flush.
+    service.telemetry_consent_cleanup();
+    await integration.setConsent(usageAllowed, crashAllowed);
+    service = await telemetryConsentService_initialize(integration, store);
+  }
+  integration.setConsentStatusSource(() => service.telemetry_consent_get());
+  return service;
+}
+
+function disposeTelemetryConsentService(): void {
+  stopTelemetryConsentStatusEvents?.();
+  stopTelemetryConsentStatusEvents = undefined;
+  distributionTelemetry?.setConsentStatusSource(undefined);
+  telemetryConsentService?.telemetry_consent_cleanup();
+  telemetryConsentService = null;
+}
 
 function requestApplicationRelaunch(): void {
   if (applicationRelaunchRequested) {
@@ -398,6 +449,32 @@ async function openExternalLink(url: string): Promise<void> {
   await shell.openExternal(parsed.toString());
 }
 
+async function openSupportDevelopmentExternal(url: string): Promise<void> {
+  const testLogPath = process.env.PI_APP_TEST_SUPPORT_OPEN_LOG_PATH;
+  if (!appTestMode || !testLogPath) {
+    await openExternalLink(url);
+    return;
+  }
+  const failOnceOptionId = process.env.PI_APP_TEST_SUPPORT_FAIL_ONCE_OPTION_ID;
+  if (failOnceOptionId && !supportOpenTestFailureConsumed) {
+    let failOnceUrl: string | undefined;
+    try {
+      failOnceUrl = supportResolveOptionUrl(failOnceOptionId);
+    } catch {
+      failOnceUrl = undefined;
+    }
+    if (failOnceUrl === url) {
+      supportOpenTestFailureConsumed = true;
+      throw new Error("Stubbed support opener failure");
+    }
+  }
+  await appendFile(testLogPath, `${url}\n`, "utf8");
+  const requestedDelay = Number(process.env.PI_APP_TEST_SUPPORT_OPEN_DELAY_MS ?? "0");
+  if (Number.isFinite(requestedDelay) && requestedDelay > 0) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(requestedDelay, 5_000)));
+  }
+}
+
 function readClipboardImageAttachment(): ClipboardImageRead {
   const image = clipboard.readImage();
   if (image.isEmpty()) {
@@ -487,6 +564,7 @@ function createWindow(): BrowserWindow {
       preload: path.join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: telemetryBridgeFrameProbe,
       sandbox: true,
       // Keep hidden test windows responsive so Playwright exercises the same UI flows.
       backgroundThrottling: !backgroundTestMode,
@@ -502,6 +580,7 @@ function createWindow(): BrowserWindow {
   });
   window.webContents.on("will-frame-navigate", (event) => {
     if (event.isMainFrame) return;
+    if (telemetryBridgeFrameProbe && event.url === "about:srcdoc") return;
     try {
       const url = new URL(event.url);
       if (
@@ -779,14 +858,28 @@ async function runManualUpdateCheck(): Promise<void> {
     window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
 
   try {
-    const result = await checkForUpdate();
+    const result = await checkForUpdate({
+      profile: distributionProfile,
+      currentVersion: app.getVersion(),
+    });
+
+    if (result.status === "disabled") {
+      await showDialog({
+        type: "info",
+        title: distributionProfile.identity.displayName,
+        message: "Update checks are not available for this candidate build.",
+        detail: result.message,
+        buttons: ["OK"],
+      });
+      return;
+    }
 
     if (result.status === "update-available") {
       // The manual menu path always confirms with a dialog — a notification may
       // be silently suppressed if the OS permission is denied.
       const choice = await showDialog({
         type: "info",
-        title: "pi-gui",
+        title: distributionProfile.identity.displayName,
         message: `Version ${result.latestVersion} is available.`,
         detail: `You have ${result.currentVersion}.`,
         buttons: ["Download", "Later"],
@@ -802,7 +895,7 @@ async function runManualUpdateCheck(): Promise<void> {
     if (result.status === "up-to-date") {
       await showDialog({
         type: "info",
-        title: "pi-gui",
+        title: distributionProfile.identity.displayName,
         message: `You're up to date on version ${result.currentVersion}.`,
         buttons: ["OK"],
       });
@@ -811,7 +904,7 @@ async function runManualUpdateCheck(): Promise<void> {
 
     await showDialog({
       type: "warning",
-      title: "pi-gui",
+      title: distributionProfile.identity.displayName,
       message: "Could not check for updates right now.",
       detail: result.message,
       buttons: ["OK"],
@@ -820,7 +913,7 @@ async function runManualUpdateCheck(): Promise<void> {
     console.error("pi-gui: manual update check failed:", error);
     await showDialog({
       type: "warning",
-      title: "pi-gui",
+      title: distributionProfile.identity.displayName,
       message: "Could not check for updates right now.",
       detail: error instanceof Error ? error.message : String(error),
       buttons: ["OK"],
@@ -930,10 +1023,20 @@ if (augmentedPath.changed && !(appTestMode && process.env.PI_APP_TEST_EXACT_PATH
   process.env.PATH = augmentedPath.path;
 }
 
-app.setName("pi");
+const distributionProfile = distributionCreateCandidateProfile(app.getVersion());
+const distributionDataPaths = distributionResolveDataPaths({
+  appDataDirectory: app.getPath("appData"),
+  profile: distributionProfile,
+  testDataRoot: appTestMode ? process.env.PI_APP_TEST_DATA_ROOT : undefined,
+  userDataDirectoryOverride: process.env.PI_APP_USER_DATA_DIR,
+  agentDataDirectoryOverride: process.env.PI_CODING_AGENT_DIR,
+});
 
-const configuredUserDataDir = process.env.PI_APP_USER_DATA_DIR?.trim() || app.getPath("userData");
+app.setName(distributionProfile.identity.appName);
+const configuredUserDataDir = distributionDataPaths.userData;
 app.setPath("userData", configuredUserDataDir);
+// Always replace ambient Pi state, including hostile or obsolete overrides.
+process.env.PI_CODING_AGENT_DIR = distributionDataPaths.agentData;
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
@@ -959,6 +1062,44 @@ app
   .then(async () => {
     if (!hasSingleInstanceLock) {
       return;
+    }
+
+    distributionTelemetry = await createDistributionTelemetryRuntime({
+      userDataDir: configuredUserDataDir,
+      version: app.getVersion(),
+      platform: process.platform,
+      architecture: process.arch,
+      environment: process.env,
+    });
+    if (distributionTelemetry) {
+      try {
+        const telemetry = distributionTelemetry;
+        telemetryConsentService = await composeTelemetryConsentService(
+          telemetry,
+          configuredUserDataDir,
+        );
+        await telemetry.startSession().catch(() => false);
+        void telemetry.flushDue().catch(() => undefined);
+        app.on("render-process-gone", () => {
+          void telemetry.recordCrash("native", "app.render_process_gone").catch(() => undefined);
+        });
+        app.on("child-process-gone", () => {
+          void telemetry.recordCrash("native", "app.child_process_gone").catch(() => undefined);
+        });
+        process.on("uncaughtExceptionMonitor", () => {
+          void telemetry
+            .recordCrash("uncaughtException", "app.uncaught_exception")
+            .catch(() => undefined);
+        });
+      } catch (error) {
+        console.error(
+          "[telemetry] consent bridge initialization failed; telemetry remains off",
+          error,
+        );
+        disposeTelemetryConsentService();
+        await distributionTelemetry.shutdown().catch(() => undefined);
+        distributionTelemetry = null;
+      }
     }
 
     // On macOS, packaged builds already render the dock icon from `icon.icns`
@@ -1050,11 +1191,25 @@ app
       userDataDir: configuredUserDataDir,
       initialWorkspacePaths: resolveInitialWorkspacePaths(),
       getWindow: () => mainWindow,
+      onUserActivity: () => {
+        const telemetry = distributionTelemetry;
+        if (!telemetry) return;
+        void telemetry.recordUserActivity().catch((error: unknown) => {
+          console.warn("[telemetry] user activity capture failed", error);
+        });
+      },
       shouldKeepSessionDialogs: (sessionRef) =>
         windowOwner?.isSessionVisibleInAnotherWindow(sessionRef) ?? false,
       driverOptions,
       generateThreadTitleOverride: async (workspace, options) =>
         generateThreadTitleOverride?.(workspace, options),
+    });
+    stopDistributionTelemetryEvents = store.subscribeToSessionEvents((event) => {
+      const telemetry = distributionTelemetry;
+      if (!telemetry) return;
+      void telemetry.handleSessionEvent(event).catch((error: unknown) => {
+        console.warn("[telemetry] session event capture failed", error);
+      });
     });
     protocol.handle(TOOL_IMAGE_SCHEME, (request) => store.transcriptImageResponse(request.url));
     windowOwner = new WindowOwner(store, {
@@ -1065,6 +1220,19 @@ app
       },
     });
     await store.initialize();
+    if (telemetryConsentService) {
+      const consentService = telemetryConsentService;
+      stopTelemetryConsentStatusEvents = consentService.telemetry_consent_status_subscribe(
+        (status) => {
+          const safeStatus = telemetryConsentIpc_decodeStatus(status);
+          for (const window of windowOwner.allWindows()) {
+            if (canPublishToWindow(window)) {
+              window.webContents.send(desktopIpc.telemetryConsentChanged, safeStatus);
+            }
+          }
+        },
+      );
+    }
     themeManager.setMode(store.snapshot().themeMode);
     integratedTerminalShell = (await store.getState()).integratedTerminalShell;
     nativeTheme.on("updated", refreshWindowBackgrounds);
@@ -1147,8 +1315,15 @@ app
     );
     stopNotifications = notificationManager.start();
     if (!isDev) {
-      stopUpdateChecker = initUpdateChecker();
+      stopUpdateChecker = initUpdateChecker({
+        profile: distributionProfile,
+        currentVersion: app.getVersion(),
+      });
     }
+    const supportDevelopment = await SupportService.create({
+      persistence: supportService_createFilePersistence(configuredUserDataDir),
+      openExternal: openSupportDevelopmentExternal,
+    });
 
     registerDesktopIpc({
       windows: windowOwner,
@@ -1184,6 +1359,24 @@ app
         theme: themeManager,
         editors: editorService,
         openExternal: openExternalLink,
+        supportDevelopment,
+        ...(telemetryConsentService
+          ? {
+              telemetryConsent: {
+                getStatus: () => {
+                  if (!telemetryConsentService)
+                    throw new Error("Telemetry consent is unavailable.");
+                  return telemetryConsentService.telemetry_consent_get();
+                },
+                change: (request) => {
+                  if (!telemetryConsentService) {
+                    return Promise.reject(new Error("Telemetry consent is unavailable."));
+                  }
+                  return telemetryConsentService.telemetry_consent_change(request);
+                },
+              },
+            }
+          : {}),
         pickWorkspace: (window) => pickWorkspaceViaDialog(window),
         createLoginCallbacks: (window) => createRuntimeLoginCallbacks(window),
         probeCustomProviderModels,
@@ -1262,8 +1455,15 @@ app
       }
     });
   })
-  .catch((error: unknown) => {
+  .catch(async (error: unknown) => {
     console.error("[main] Application startup failed", error);
+    disposeTelemetryConsentService();
+    const telemetry = distributionTelemetry;
+    distributionTelemetry = null;
+    if (telemetry) {
+      await telemetry.recordCrash("other", "app.startup_failed").catch(() => false);
+      await telemetry.shutdown().catch(() => undefined);
+    }
     app.exit(1);
   });
 
@@ -1299,7 +1499,7 @@ app.on("before-quit", (event) => {
   stopPruningTerminals = undefined;
   terminalService?.dispose();
   terminalService = undefined;
-  if (quitFlush === "done" || !store) {
+  if (quitFlush === "done") {
     return;
   }
 
@@ -1307,14 +1507,21 @@ app.on("before-quit", (event) => {
   // A second quit request during the flush waits for the one already running.
   if (quitFlush === "flushing") return;
   quitFlush = "flushing";
-  const quittingStore = store;
-  // Renderers send their debounced drafts first so the store flush below includes them.
-  const flush = composerDraftFlusher
-    .flush(windowOwner.allWindows())
-    .then(() => Promise.all([quittingStore.flushPersistence(), extensionViewOwner?.dispose()]))
-    .catch((error: unknown) => {
-      console.error("pi-gui: persistence flush failed during quit:", error);
-    });
+  stopDistributionTelemetryEvents?.();
+  stopDistributionTelemetryEvents = undefined;
+  disposeTelemetryConsentService();
+  const quittingTelemetry = distributionTelemetry;
+  distributionTelemetry = null;
+  const telemetryShutdown = quittingTelemetry?.shutdown() ?? Promise.resolve();
+  const applicationFlush = store
+    ? // Renderers send their debounced drafts first so the store flush includes them.
+      composerDraftFlusher
+        .flush(windowOwner.allWindows())
+        .then(() => Promise.all([store.flushPersistence(), extensionViewOwner?.dispose()]))
+    : Promise.resolve();
+  const flush = Promise.all([applicationFlush, telemetryShutdown]).catch((error: unknown) => {
+    console.error("pi-gui: persistence flush failed during quit:", error);
+  });
   // Never let a hung flush block quit forever — quit after a bounded wait.
   const flushDeadline = new Promise<void>((resolve) => {
     setTimeout(() => {

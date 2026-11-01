@@ -1,50 +1,89 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import {
+  mkdir,
+  open as openFile,
+  rename as renameFile,
+  rm as removeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** Suffix of the transient files writeFileAtomic creates before renaming into place. */
 export const TMP_SUFFIX = ".tmp";
 
+/** Narrow filesystem operations used to exercise failure paths without changing production behavior. */
+export interface AtomicWriteFileSystem {
+  readonly mkdir: (path: string, options: { readonly recursive: true }) => Promise<unknown>;
+  readonly open: (path: string, flags: string | number) => Promise<FileHandle>;
+  readonly rename: (oldPath: string, newPath: string) => Promise<void>;
+  readonly rm: (path: string, options: { readonly force: true }) => Promise<void>;
+}
+
+export interface AtomicWriteOptions {
+  /** Intended only for deterministic failure tests; production uses the node:fs/promises implementation. */
+  readonly fileSystem?: AtomicWriteFileSystem;
+}
+
+const nodeFileSystem: AtomicWriteFileSystem = {
+  mkdir,
+  open: openFile,
+  rename: renameFile,
+  rm: removeFile,
+};
+
 let tmpCounter = 0;
 
 /**
- * Write `data` to `filePath` durably. A concurrent reader or a crash at any
- * point always observes either the previous file contents or the fully-written
- * new contents — never a missing, truncated, or partially-written file.
+ * Write `data` durably. A concurrent reader or a crash observes either the
+ * previous complete target or the fully-written replacement.
  *
- * Steps:
- * - Write to a uniquely-named temp file in the same directory and fsync it.
- * - rename() straight over the target (atomic replace on POSIX). There is no
- *   unlink first, so a crash in the write window cannot leave the target gone.
- * - fsync the containing directory so the rename entry itself survives power
- *   loss, not just the temp file's data blocks.
+ * The temp file is unique and adjacent to the target. A successful complete
+ * write and file fsync precedes a rename directly over the target. There is no
+ * unlink of the target, so write, close, and rename failures leave the prior
+ * target intact. Any owned temp file is removed on those failures.
+ *
+ * The containing directory is fsynced on a best-effort basis. Directory open,
+ * sync, or close failures are ignored because some platforms cannot fsync a
+ * directory. Once rename has succeeded, the new bytes are installed even if
+ * that directory sync fails; the only remaining uncertainty is whether the
+ * rename survives a crash or power loss.
  */
-export async function writeFileAtomic(filePath: string, data: string | Uint8Array): Promise<void> {
+export async function writeFileAtomic(
+  filePath: string,
+  data: string | Uint8Array,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
+  const fileSystem = options.fileSystem ?? nodeFileSystem;
   const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
+  await fileSystem.mkdir(dir, { recursive: true });
 
-  // Collision-safe temp name: a pid + monotonic counter + randomness so two
-  // writers, or two writes within the same millisecond, never share a path
-  // (Date.now() alone is not unique under concurrent writes).
+  // A pid, process-local counter and randomness prevent two writers from
+  // sharing a temp path, including writes started in the same millisecond.
   tmpCounter = (tmpCounter + 1) >>> 0;
   const tmpPath = `${filePath}.${process.pid}.${tmpCounter}.${randomBytes(6).toString("hex")}${TMP_SUFFIX}`;
 
-  const handle = await open(tmpPath, "w");
+  let handle: FileHandle | undefined;
   try {
+    handle = await fileSystem.open(tmpPath, "w");
     await handle.writeFile(data);
     await handle.sync();
-  } finally {
-    await handle.close();
-  }
-
-  try {
-    await rename(tmpPath, filePath);
+    const closing = handle;
+    handle = undefined; // A failed close is already the final close attempt.
+    await closing.close();
   } catch (error) {
-    await rm(tmpPath, { force: true }).catch(() => {});
+    if (handle) await closeBestEffort(handle);
+    await fileSystem.rm(tmpPath, { force: true }).catch(() => {});
     throw error;
   }
 
-  await syncDirectory(dir);
+  try {
+    await fileSystem.rename(tmpPath, filePath);
+  } catch (error) {
+    await fileSystem.rm(tmpPath, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  await syncDirectory(fileSystem, dir);
 }
 
 /** Serialize `value` as pretty JSON with a trailing newline and write it atomically. */
@@ -52,20 +91,18 @@ export async function writeJsonFileAtomic(filePath: string, value: unknown): Pro
   await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function syncDirectory(dir: string): Promise<void> {
-  let handle;
+async function closeBestEffort(handle: FileHandle): Promise<void> {
+  await handle.close().catch(() => {});
+}
+
+async function syncDirectory(fileSystem: AtomicWriteFileSystem, dir: string): Promise<void> {
+  let handle: FileHandle | undefined;
   try {
-    handle = await open(dir, "r");
-  } catch {
-    // Some platforms (notably Windows) reject opening a directory for fsync.
-    // The rename above is still atomic; skip the extra durability step.
-    return;
-  }
-  try {
+    handle = await fileSystem.open(dir, "r");
     await handle.sync();
   } catch {
-    // Best effort — a failed directory fsync must not fail the write.
+    // Directory fsync is a durability enhancement, not part of replacement.
   } finally {
-    await handle.close();
+    if (handle) await closeBestEffort(handle);
   }
 }

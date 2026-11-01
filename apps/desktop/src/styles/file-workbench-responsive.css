@@ -1,0 +1,87 @@
+/* Query the Files surface itself: side-panel resizing need not resize the window. */
+.file-workbench.file-workbench--split {
+  container: files-workbench / inline-size;
+  display: block;
+  min-width: 0;
+}
+
+.file-workbench__layout {
+  display: grid;
+  grid-template-areas: "editor explorer";
+  grid-template-columns: minmax(0, 1fr) 260px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.file-workbench__layout > .file-editor {
+  grid-area: editor;
+}
+
+.file-workbench__layout > .file-explorer {
+  grid-area: explorer;
+}
+
+.file-workbench .file-editor__tab-strip {
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  min-width: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.file-workbench .file-editor__tabs {
+  flex-wrap: wrap;
+  flex-basis: 180px;
+  overflow: visible;
+}
+
+.file-workbench .file-editor__tab {
+  min-width: 0;
+  max-width: min(180px, 100%);
+}
+
+.file-workbench .file-editor__tab-close {
+  flex-shrink: 0;
+}
+
+.file-workbench .file-editor__actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+  padding-bottom: 4px;
+}
+
+.file-workbench .file-editor__breadcrumb {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.file-workbench .file-editor__breadcrumb > span {
+  flex-shrink: 0;
+}
+
+.file-workbench .file-explorer__toolbar {
+  flex-shrink: 0;
+}
+
+.file-workbench .file-explorer > .diff-panel__empty {
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+@container files-workbench (max-width: 600px) {
+  .file-workbench__layout {
+    grid-template-areas: "explorer" "editor";
+    grid-template-columns: minmax(0, 1fr);
+    /* Keep both independently scrollable even with a long file list. */
+    grid-template-rows: minmax(100px, 35%) minmax(0, 1fr);
+  }
+
+  .file-workbench__layout > .file-editor {
+    border-right: 0;
+    border-top: 1px solid var(--border);
+  }
+}

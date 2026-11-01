@@ -1,3 +1,10 @@
+import { childSelection_rejectOriginInput } from "../../contracts/child-selection";
+import type {
+  ChildModelSelection,
+  ChildOriginMetadata,
+  ChildSelectedConfiguration,
+} from "../../contracts/child-selection";
+import { childSelection_decode } from "../../contracts/child-selection";
 import type {
   AgentToolResult,
   ExtensionAPI,
@@ -34,6 +41,8 @@ export interface ArchiveChildThreadsToolDetails {
 }
 
 export interface CreateChildThreadToolDetails {
+  readonly origin?: ChildOriginMetadata;
+  readonly selectedConfig?: ChildSelectedConfiguration;
   readonly action: typeof createChildThreadAction;
   readonly prompt: string;
   readonly childThreadId?: string;
@@ -112,7 +121,11 @@ export interface OrchestrationRuntimeBridge {
   ) => Promise<AgentToolResult<ArchiveChildThreadsToolDetails>>;
   readonly createChildThread: (
     ctx: ExtensionContext,
-    input: { readonly prompt: string; readonly toolCallId: string },
+    input: {
+      readonly prompt: string;
+      readonly toolCallId: string;
+      readonly selection?: ChildModelSelection;
+    },
   ) => Promise<AgentToolResult<CreateChildThreadToolDetails>>;
   readonly listThreads: (
     ctx: ExtensionContext,
@@ -147,6 +160,7 @@ function createCreateChildThreadTool(
     promptGuidelines: [
       "Use create_child_thread when the user asks you to spin up, delegate to, or run a separate child thread.",
       "Keep the child prompt concrete and self-contained so the user can inspect the resulting thread.",
+      "Set selection only when the user requested an exact provider, model, or thinking level; never guess or silently substitute one.",
     ],
     parameters: {
       type: "object",
@@ -155,15 +169,44 @@ function createCreateChildThreadTool(
           type: "string",
           description: "Concrete instructions for the child thread.",
         },
+        selection: {
+          type: "object",
+          description:
+            "Optional exact model selection. Provider and modelId are required together; thinkingLevel is optional.",
+          properties: {
+            provider: {
+              type: "string",
+              description: "Exact provider id from the effective model catalogue.",
+            },
+            modelId: {
+              type: "string",
+              description: "Exact model id from the effective model catalogue.",
+            },
+            thinkingLevel: {
+              type: "string",
+              enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+              description: "Exact supported thinking level.",
+            },
+          },
+          required: ["provider", "modelId"],
+          additionalProperties: false,
+        },
       },
       required: ["prompt"],
+      additionalProperties: false,
     },
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      childSelection_rejectOriginInput(params);
       const prompt = createChildThreadPromptFromParams(params);
       if (!prompt) {
         throw new Error("create_child_thread requires a non-empty prompt.");
       }
-      return bridge.createChildThread(ctx, { prompt, toolCallId });
+      const selection = createChildThreadSelectionFromParams(params);
+      return bridge.createChildThread(ctx, {
+        prompt,
+        toolCallId,
+        ...(selection ? { selection } : {}),
+      });
     },
   };
 }
@@ -375,14 +418,32 @@ export function createChildThreadPromptFromParams(params: unknown): string | und
   return prompt || undefined;
 }
 
+export function createChildThreadSelectionFromParams(
+  params: unknown,
+): ChildModelSelection | undefined {
+  if (!isRecord(params) || !("selection" in params)) {
+    return undefined;
+  }
+  return childSelection_decode(params.selection);
+}
+
+export function createChildThreadRequestFromToolOutput(
+  output: unknown,
+): { readonly prompt: string; readonly selection?: ChildModelSelection } | undefined {
+  const details = toolOutputDetails(output);
+  if (details?.action !== createChildThreadAction) {
+    return undefined;
+  }
+  const prompt = createChildThreadPromptFromParams(details);
+  if (!prompt) {
+    return undefined;
+  }
+  const selection = createChildThreadSelectionFromParams(details);
+  return { prompt, ...(selection ? { selection } : {}) };
+}
+
 export function createChildThreadPromptFromToolOutput(output: unknown): string | undefined {
-  if (!isRecord(output) || !isRecord(output.details)) {
-    return undefined;
-  }
-  if (output.details.action !== createChildThreadAction) {
-    return undefined;
-  }
-  return createChildThreadPromptFromParams(output.details);
+  return createChildThreadRequestFromToolOutput(output)?.prompt;
 }
 
 export function listThreadsRequestedFromToolOutput(output: unknown): boolean {

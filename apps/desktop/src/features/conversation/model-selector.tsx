@@ -7,7 +7,7 @@ import {
   type ComposerModelOption,
 } from "./composer-commands";
 
-interface ModelSelectorProps {
+export interface ModelSelectorProps {
   readonly runtime: RuntimeSnapshot | undefined;
   readonly provider: string | undefined;
   readonly modelId: string | undefined;

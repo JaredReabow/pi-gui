@@ -56,6 +56,8 @@ plans/
 pnpm-lock.yaml
 main.js
 patches/
+artifacts/
+.parallelism/
 
 # Checked-in browser builds for the installable extension examples.
 /examples/desktop-extensions/*/dist/

@@ -37,13 +37,14 @@ export async function createWorktree(
     try {
       const synced = await store.driver.syncWorkspace(created.path, created.displayName);
       if (input.fromSessionId) {
-        await store.driver.createSession(synced.workspace, {
+        const session = await store.driver.createSession(synced.workspace, {
           title: sessionTitleForWorktree(
             store,
             input.fromSessionWorkspaceId ?? input.workspaceId,
             input.fromSessionId,
           ),
         });
+        store.recordSessionCreation(session.ref);
       }
     } catch (error) {
       await rollbackCreatedWorktree(store, rootWorkspace, createOptions);
@@ -284,6 +285,7 @@ export async function forkThread(
       }
       throw error;
     }
+    store.recordSessionCreation(session.ref);
     store.updateSessionConfig(session.ref, session.config);
     store.recordExtensionFlags(session.ref, extensionFlagValues);
 

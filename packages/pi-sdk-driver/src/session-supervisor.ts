@@ -32,12 +32,18 @@ import type {
   ForkSessionResult,
   HostUiRequest,
   HostUiResponse,
+  InlineWorkerDriverCapability,
+  InlineWorkerHostAssociation,
+  InlineWorkerHostCapability,
+  InlineWorkerModelRequest,
+  InlineWorkerRunHandle,
   SessionConfig,
   SessionDriverEvent,
   SessionEventListener,
   SessionModelSelection,
   SessionRef,
   SessionRunOutcome,
+  SessionTerminalRun,
   SessionPlanLimits,
   SessionSnapshot,
   SessionUsageSnapshot,
@@ -130,6 +136,11 @@ import {
   type PiCreateAgentSessionOptions,
   type PiModelInfo,
 } from "./npm-package-fallback.js";
+import {
+  InlineWorkerSupervisor,
+  type InlineWorkerSupervisorOptions,
+} from "./inline-worker-supervisor.js";
+import { inlineWorkerPolicy_validatePrompt } from "./inline-worker-policy.js";
 
 type RuntimeModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
@@ -190,6 +201,8 @@ export interface PiSdkDriverOptions {
     workspace: WorkspaceRef,
     options: import("./thread-title-generator.js").GenerateThreadTitleOptions,
   ) => Promise<string | null | undefined>;
+  /** Explicit test seam and optional bounded policy overrides; numeric defaults live in policy. */
+  readonly inlineWorkerOptions?: InlineWorkerSupervisorOptions;
 }
 
 export interface SyncWorkspaceResult {
@@ -213,6 +226,11 @@ interface ManagedSessionRecord {
   preview: string | undefined;
   config: SessionConfig | undefined;
   runningRunId: string | undefined;
+  /**
+   * Top-level Pi SDK tool calls currently awaiting their end event. Nested calls
+   * with parentToolCallId are excluded by the event mapping boundary.
+   */
+  pendingSdkToolCallIds: Set<string>;
   cancellationRequested: boolean;
   /** A prompt is in Pi's pre-run steps (input handlers, auth, before_agent_start). */
   promptStarting: boolean;
@@ -227,6 +245,19 @@ interface ManagedSessionRecord {
    * run starts. Saved in the session catalog so it survives a restart.
    */
   stoppedReplyId: string | undefined;
+  terminalRun?: SessionTerminalRun | undefined;
+  /** Retained through Stop's UI reset until the authoritative settled boundary. */
+  activeTerminalRun?:
+    | {
+        runId: string;
+        generation: number;
+        sessionRef: SessionRef;
+        nativeSessionId: string;
+        allocation?: Promise<number | undefined>;
+      }
+    | undefined;
+  terminalWrite?: Promise<void> | undefined;
+  runGeneration?: number | undefined;
   /**
    * pi started a run (agent_start) and has not published agent_settled yet. A Stop can end
    * the visible run first, while extension agent_settled handlers still run.
@@ -317,7 +348,16 @@ interface SkillAdapter {
   readonly source?: string;
 }
 
-export class SessionSupervisor {
+interface PreparedInlineWorkerHost {
+  readonly record: ManagedSessionRecord;
+  readonly association: InlineWorkerHostAssociation;
+  readonly signal: AbortSignal;
+  readonly activeTerminalRun: NonNullable<ManagedSessionRecord["activeTerminalRun"]>;
+  readonly generation: number;
+  readonly pendingSdkToolCallIds: ReadonlySet<string>;
+}
+
+export class SessionSupervisor implements InlineWorkerDriverCapability {
   /**
    * Sessions whose last stopped-run mark write failed: the catalog may be missing a Stop,
    * so the guarded archive refuses them until a later write for the session succeeds.
@@ -337,6 +377,11 @@ export class SessionSupervisor {
   private readonly onTurnCaptureBoundary: PiSdkDriverOptions["onTurnCaptureBoundary"];
   private readonly turnCaptureTimeoutMs: number | undefined;
   private readonly records = new Map<string, ManagedSessionRecord>();
+  private readonly inlineWorkerSupervisor: InlineWorkerSupervisor;
+  private readonly preparedInlineWorkerHosts = new WeakMap<
+    InlineWorkerHostCapability,
+    PreparedInlineWorkerHost
+  >();
   /** Latest plan limits a provider reported, shared by every session on that provider. */
   private readonly planLimitsByProvider = new Map<string, SessionPlanLimits>();
   private readonly ensureRecordInFlight = new Map<string, Promise<ManagedSessionRecord>>();
@@ -355,6 +400,7 @@ export class SessionSupervisor {
         : new JsonCatalogStore());
     this.createAgentSessionRuntimeImpl =
       options.createAgentSessionRuntimeImpl ?? createAgentSessionRuntimeWithNpmFallback;
+    this.inlineWorkerSupervisor = new InlineWorkerSupervisor(options.inlineWorkerOptions);
     this.builtinExtensions = gatedBuiltinExtensions(
       options.builtinExtensions ?? [],
       options.isBuiltinExtensionEnabled ?? (() => true),
@@ -570,6 +616,9 @@ export class SessionSupervisor {
       record.unsubscribeAgent?.();
       record.unsubscribeAgent = undefined;
       record.listeners.clear();
+      record.closed = true;
+      record.pendingSdkToolCallIds.clear();
+      await this.cancelInlineWorkersForParent(record.ref);
       await this.disposeRecordRuntimeSafely(record);
       this.records.delete(key);
     }
@@ -635,6 +684,9 @@ export class SessionSupervisor {
           continue;
         }
 
+        record.closed = true;
+        record.pendingSdkToolCallIds.clear();
+        await this.cancelInlineWorkersForParent(record.ref);
         record.unsubscribeAgent?.();
         record.unsubscribeAgent = undefined;
         record.listeners.clear();
@@ -1103,20 +1155,29 @@ export class SessionSupervisor {
   ): Promise<void> {
     const isQueuedMessage = session.isStreaming && !isExtensionCommand && Boolean(input.deliverAs);
     const runId = isQueuedMessage || isExtensionCommand ? undefined : crypto.randomUUID();
-    if (!isQueuedMessage && !isExtensionCommand) {
-      record.cancellationRequested = false;
-      record.abortOnRunStart = false;
-      // Stop can arrive from here on, before Pi has a run to abort.
-      record.promptStarting = true;
-    }
-    record.runningRunId = runId ?? record.runningRunId;
-    record.status = isQueuedMessage || isExtensionCommand ? record.status : "running";
-    record.updatedAt = nowIso();
     // A prompt sent to a thread brings it back from the archive, as the app already does
     // before a send. This also undoes an agent archive that landed while the caller was
     // still preparing the send. A queued message starting does not: the user may have
     // archived the thread while it ran.
     if (input.revivesArchived && !isExtensionCommand) record.archivedAt = undefined;
+    if (runId) {
+      const generation = await this.catalogs.sessions.beginRun(record.ref, runId);
+      record.activeTerminalRun = {
+        runId,
+        generation,
+        sessionRef: { ...record.ref },
+        nativeSessionId: session.sessionId,
+      };
+      record.runGeneration = generation;
+      record.terminalRun = undefined;
+      record.cancellationRequested = false;
+      record.abortOnRunStart = false;
+      // Generation allocation precedes acceptance so Stop always has an identified target.
+      record.promptStarting = true;
+    }
+    record.runningRunId = runId ?? record.runningRunId;
+    record.status = isQueuedMessage || isExtensionCommand ? record.status : "running";
+    record.updatedAt = nowIso();
     record.config = deriveSessionConfig(session.sessionManager);
     // A card button's command is not something the user said, so it leaves the preview.
     if (!input.extensionCommandOnly) record.preview = truncate(input.text);
@@ -1442,23 +1503,231 @@ export class SessionSupervisor {
       });
   }
 
+  /**
+   * Capture a host-only capability from live private parent state. The returned
+   * capability is registered weakly here; cloning or constructing the same shape
+   * elsewhere does not grant authority.
+   */
+  async createInlineWorkerHostCapability(
+    parent: SessionRef,
+    parentRunId: string,
+    parentToolCallId: string,
+    signal: AbortSignal,
+  ): Promise<InlineWorkerHostCapability> {
+    const record = this.records.get(sessionKey(parent));
+    const session = record?.session;
+    const active = record?.activeTerminalRun;
+    if (!record || !session || record.closed) {
+      throw new Error("Inline-worker parent session is not live.");
+    }
+    if (sessionKey(record.ref) !== sessionKey(parent) || record.runningRunId !== parentRunId) {
+      throw new Error("Inline-worker parent run is stale.");
+    }
+    if (
+      !active ||
+      active.nativeSessionId !== session.sessionId ||
+      sessionKey(active.sessionRef) !== sessionKey(record.ref)
+    ) {
+      throw new Error("Inline-worker parent generation is unavailable.");
+    }
+    const generation = await (active.allocation ?? Promise.resolve(active.generation));
+    if (generation === undefined) {
+      throw new Error("Inline-worker parent generation is unresolved.");
+    }
+    if (
+      record.activeTerminalRun !== active ||
+      record.session !== session ||
+      record.runningRunId !== parentRunId ||
+      record.closed
+    ) {
+      throw new Error("Inline-worker parent changed during capability capture.");
+    }
+    active.generation = generation;
+    if (parentToolCallId.trim().length === 0) {
+      throw new Error("Inline-worker parent tool call is invalid.");
+    }
+    if (!record.pendingSdkToolCallIds.has(parentToolCallId)) {
+      throw new Error("Inline-worker parent tool call is not pending.");
+    }
+    if (
+      typeof signal !== "object" ||
+      signal === null ||
+      typeof signal.aborted !== "boolean" ||
+      typeof signal.addEventListener !== "function" ||
+      typeof signal.removeEventListener !== "function"
+    ) {
+      throw new Error("Inline-worker parent signal is invalid.");
+    }
+
+    const branchId = session.sessionManager.getLeafId() ?? undefined;
+    const pendingSdkToolCallIds = [...record.pendingSdkToolCallIds].sort();
+    const parentSnapshot = Object.freeze({
+      workspaceId: record.ref.workspaceId,
+      sessionId: record.ref.sessionId,
+    }) satisfies SessionRef;
+    const association: InlineWorkerHostAssociation = Object.freeze({
+      parent: parentSnapshot,
+      parentRunId,
+      parentGeneration: generation,
+      parentNativeSessionId: session.sessionId,
+      ...(branchId ? { parentBranchId: branchId } : {}),
+      parentToolCallId,
+      pendingSdkToolCallIds: Object.freeze(pendingSdkToolCallIds),
+      workerId: crypto.randomUUID(),
+      workerRunId: crypto.randomUUID(),
+    });
+    const host = Object.freeze({
+      association,
+      signal,
+    }) as InlineWorkerHostCapability;
+    this.preparedInlineWorkerHosts.set(host, {
+      record,
+      association,
+      signal,
+      activeTerminalRun: active,
+      generation,
+      pendingSdkToolCallIds: new Set(pendingSdkToolCallIds),
+    });
+    return host;
+  }
+
+  /**
+   * Admission rechecks every captured fact synchronously. Request validation and
+   * association checks happen before the registry reserves capacity or the SDK
+   * constructs an in-memory session.
+   */
+  startInlineWorker(
+    request: InlineWorkerModelRequest,
+    host: InlineWorkerHostCapability,
+  ): InlineWorkerRunHandle {
+    const prepared = this.preparedInlineWorkerHosts.get(host);
+    if (!prepared) {
+      return this.inlineWorkerSupervisor.reject(
+        host,
+        "INVALID_ASSOCIATION",
+        "Inline-worker capability was not issued by this live supervisor.",
+      );
+    }
+    const decoded = inlineWorkerPolicy_validatePrompt(request, this.inlineWorkerSupervisor.policy);
+    if (!decoded.ok) {
+      return this.inlineWorkerSupervisor.rejectTrusted(
+        prepared.association,
+        decoded.error.code,
+        decoded.error.message,
+      );
+    }
+    const associationError = this.inlineWorkerAssociationError(prepared);
+    const record = prepared.record;
+    const session = record.session;
+    if (associationError || !session?.model || record.workspace.path.length === 0) {
+      return this.inlineWorkerSupervisor.rejectTrusted(
+        prepared.association,
+        "INVALID_ASSOCIATION",
+        associationError ?? "Inline-worker parent model or working directory is unavailable.",
+      );
+    }
+
+    return this.inlineWorkerSupervisor.start({
+      association: prepared.association,
+      prompt: decoded.prompt,
+      model: session.model,
+      modelRuntime: session.modelRuntime,
+      thinkingLevel: session.thinkingLevel,
+      cwd: record.workspace.path,
+      agentDir: this.agentDir ?? record.workspace.path,
+      parentSignal: prepared.signal,
+    });
+  }
+
+  cancelInlineWorkersForParent(parent: SessionRef): Promise<void> {
+    return this.inlineWorkerSupervisor.cancelParent(parent);
+  }
+
+  private inlineWorkerAssociationError(prepared: PreparedInlineWorkerHost): string | undefined {
+    const { record, association, activeTerminalRun, generation, pendingSdkToolCallIds } = prepared;
+    const liveRecord = this.records.get(sessionKey(record.ref));
+    const session = record.session;
+    if (liveRecord !== record || !session || record.closed) {
+      return "Inline-worker parent session is absent or closed.";
+    }
+    if (record.activeTerminalRun !== activeTerminalRun) {
+      return "Inline-worker parent run generation is stale.";
+    }
+    if (
+      activeTerminalRun.generation !== generation ||
+      activeTerminalRun.nativeSessionId !== session.sessionId
+    ) {
+      return "Inline-worker parent generation no longer matches.";
+    }
+    if (
+      record.runningRunId !== activeTerminalRun.runId ||
+      record.runningRunId !== association.parentRunId
+    ) {
+      return "Inline-worker parent run is no longer current.";
+    }
+    if (
+      record.pendingSdkToolCallIds.size !== pendingSdkToolCallIds.size ||
+      [...pendingSdkToolCallIds].some((id) => !record.pendingSdkToolCallIds.has(id))
+    ) {
+      return "Inline-worker pending tool-call snapshot is stale.";
+    }
+    if (sessionKey(association.parent) !== sessionKey(record.ref)) {
+      return "Inline-worker parent identity changed.";
+    }
+    if (association.parentToolCallId !== association.parentToolCallId.trim()) {
+      return "Inline-worker parent tool-call identity is invalid.";
+    }
+    if (!record.pendingSdkToolCallIds.has(association.parentToolCallId)) {
+      return "Inline-worker parent tool call is no longer pending.";
+    }
+    const branchId = session.sessionManager.getLeafId();
+    if (association.parentBranchId !== undefined && association.parentBranchId !== branchId) {
+      return "Inline-worker parent branch changed.";
+    }
+    if (association.parentNativeSessionId !== session.sessionId) {
+      return "Inline-worker native parent session changed.";
+    }
+    return undefined;
+  }
+
   async cancelCurrentRun(sessionRef: SessionRef): Promise<void> {
     const record = this.records.get(sessionKey(sessionRef));
+    const workersCancelled = record
+      ? this.cancelInlineWorkersForParent(record.ref)
+      : Promise.resolve();
     if (!record?.session) {
+      await workersCancelled;
       return;
     }
 
+    // No-op and completed sessions never acquire cancellation intent.
+    if (
+      !record.activeTerminalRun ||
+      record.activeTerminalRun.nativeSessionId !== record.session.sessionId ||
+      sessionKey(record.activeTerminalRun.sessionRef) !== sessionKey(record.ref) ||
+      (!record.promptStarting && !record.runAwaitingSettle && !record.session.isStreaming)
+    ) {
+      await workersCancelled;
+      return;
+    }
+    const target = record.activeTerminalRun;
     record.cancellationRequested = true;
     if (record.runAwaitingSettle) record.stopBeforeSettle = true;
     if (record.promptStarting && !record.session.isStreaming) {
       record.abortOnRunStart = true;
     }
     try {
-      await record.session.abort();
+      await Promise.all([record.session.abort(), workersCancelled]);
     } catch (error) {
       // Abort is best-effort. Even if the runtime reports a failure we still
       // reset local run state below so the UI does not stay stuck on "running".
+      if (record.activeTerminalRun === target) {
+        record.cancellationRequested = false;
+        record.stopBeforeSettle = false;
+        record.abortOnRunStart = false;
+      }
       console.warn(`[pi-sdk-driver] abort failed for ${sessionKey(record.ref)}:`, error);
+      throw error;
     }
 
     // Aborting ends the current turn, so any steer/follow-up messages queued
@@ -1686,6 +1955,8 @@ export class SessionSupervisor {
 
     record.closed = true;
     record.runningRunId = undefined;
+    record.pendingSdkToolCallIds.clear();
+    await this.cancelInlineWorkersForParent(record.ref);
     record.status = "idle";
     this.clearExtensionUiState(record);
     this.cancelPendingHostUiRequests(record);
@@ -1785,6 +2056,7 @@ export class SessionSupervisor {
     record.updatedAt = sessionEntry.updatedAt;
     record.archivedAt = sessionEntry.archivedAt;
     record.stoppedReplyId = sessionEntry.stoppedReplyId;
+    record.terminalRun = sessionEntry.terminalRun;
     record.preview = sessionEntry.previewSnippet ?? undefined;
     record.config = deriveSessionConfig(session.sessionManager);
     record.closed = false;
@@ -1821,6 +2093,7 @@ export class SessionSupervisor {
       preview: undefined,
       config: deriveSessionConfig(session.sessionManager),
       runningRunId: undefined,
+      pendingSdkToolCallIds: new Set(),
       cancellationRequested: false,
       promptStarting: false,
       abortOnRunStart: false,
@@ -2029,6 +2302,9 @@ export class SessionSupervisor {
     session: AgentSession,
   ): Promise<void> {
     const previousKey = sessionKey(record.ref);
+    record.closed = true;
+    record.pendingSdkToolCallIds.clear();
+    await this.cancelInlineWorkersForParent(record.ref);
     const nextRef = {
       workspaceId: record.workspace.workspaceId,
       sessionId: session.sessionId,
@@ -2038,8 +2314,7 @@ export class SessionSupervisor {
     if (previousKey !== nextKey) {
       const existingTarget = this.records.get(nextKey);
       // The stopped-reply mark belongs to the session being switched to, not the one left.
-      const targetStoppedReplyId = (await this.catalogs.sessions.getSession(nextRef))
-        ?.stoppedReplyId;
+      const targetEntry = await this.catalogs.sessions.getSession(nextRef);
       if (existingTarget && existingTarget !== record) {
         for (const listener of existingTarget.listeners) {
           record.listeners.add(listener);
@@ -2047,15 +2322,23 @@ export class SessionSupervisor {
         existingTarget.unsubscribeAgent?.();
         existingTarget.unsubscribeAgent = undefined;
         this.cancelPendingHostUiRequests(existingTarget);
+        existingTarget.closed = true;
+        existingTarget.pendingSdkToolCallIds.clear();
+        await this.cancelInlineWorkersForParent(existingTarget.ref);
         await this.disposeRecordRuntime(existingTarget);
       }
       this.records.delete(previousKey);
       record.ref = nextRef;
-      record.stoppedReplyId = targetStoppedReplyId;
+      record.stoppedReplyId = targetEntry?.stoppedReplyId;
+      record.terminalRun = targetEntry?.terminalRun;
+      record.activeTerminalRun = undefined;
+      record.runGeneration = targetEntry?.terminalRun?.generation;
+      record.pendingSdkToolCallIds.clear();
       this.records.set(nextKey, record);
     }
 
     record.session = session;
+    record.closed = false;
     // The old session's agent_settled will not reach this record any more.
     record.runAwaitingSettle = session.isStreaming;
     record.stopBeforeSettle = false;
@@ -2676,6 +2959,7 @@ export class SessionSupervisor {
     events: readonly SessionDriverEvent[],
     options?: {
       readonly persistSnapshot?: boolean;
+      readonly refreshSettledSnapshot?: boolean;
     },
   ): void {
     if (events.length === 0) {
@@ -2689,7 +2973,12 @@ export class SessionSupervisor {
           await this.persistSnapshot(record);
         }
         for (const event of events) {
-          await this.emit(record, event);
+          await this.emit(
+            record,
+            options?.refreshSettledSnapshot && "snapshot" in event
+              ? { ...event, snapshot: buildSnapshot(record) }
+              : event,
+          );
         }
       },
       (error) => {
@@ -2740,6 +3029,7 @@ export class SessionSupervisor {
 
     this.queueDriverEvents(record, mapped, {
       persistSnapshot: shouldPersistSnapshotForAgentEvent(event.type),
+      refreshSettledSnapshot: event.type === "agent_settled",
     });
     if (event.type === "agent_settled" || event.type === "compaction_end") {
       this.whenIdle(record);
@@ -2759,13 +3049,46 @@ export class SessionSupervisor {
 
     switch (event.type) {
       case "agent_start":
+        record.pendingSdkToolCallIds ??= new Set();
+        record.pendingSdkToolCallIds.clear();
         if (record.abortOnRunStart && record.session) {
           record.abortOnRunStart = false;
+          const target = record.activeTerminalRun;
           record.session.abort().catch((error: unknown) => {
+            if (record.activeTerminalRun === target) {
+              record.cancellationRequested = false;
+              record.stopBeforeSettle = false;
+            }
             console.warn("[pi-sdk-driver] deferred abort failed", error);
           });
         }
         record.runningRunId ??= crypto.randomUUID();
+        // Extensions may start Pi directly, bypassing sendCheckedMessage. Give that turn
+        // the same durable generation before its settlement can be recorded.
+        if (!record.activeTerminalRun && record.session) {
+          const ref = { ...record.ref };
+          record.terminalRun = undefined;
+          record.activeTerminalRun = {
+            runId: record.runningRunId,
+            generation: 0,
+            sessionRef: ref,
+            nativeSessionId: record.session.sessionId,
+            allocation: this.catalogs.sessions
+              .beginRun(ref, record.runningRunId)
+              .then((generation) => {
+                if (sessionKey(record.ref) === sessionKey(ref))
+                  record.runGeneration = Math.max(record.runGeneration ?? 0, generation);
+                return generation;
+              })
+              .catch((error: unknown) => {
+                console.warn(
+                  `[pi-sdk-driver] extension run remains durable-unconfirmed for ${sessionKey(ref)}:`,
+                  error,
+                );
+                return undefined;
+              }),
+          };
+        }
         record.pendingRunOutcome = undefined;
         this.markStoppedReply(record, undefined);
         record.runAwaitingSettle = true;
@@ -2825,6 +3148,8 @@ export class SessionSupervisor {
         }
         return [sessionUpdatedEvent(record)];
       case "tool_execution_start":
+        record.pendingSdkToolCallIds ??= new Set();
+        record.pendingSdkToolCallIds.add(event.toolCallId);
         record.status = "running";
         return toDriverEvents(
           {
@@ -2850,6 +3175,8 @@ export class SessionSupervisor {
           record,
         );
       case "tool_execution_end":
+        record.pendingSdkToolCallIds ??= new Set();
+        record.pendingSdkToolCallIds.delete(event.toolCallId);
         return toDriverEvents(
           {
             type: "toolFinished" as const,
@@ -2912,10 +3239,12 @@ export class SessionSupervisor {
         return [sessionUpdatedEvent(record)];
       }
       case "agent_settled": {
-        const outcome = record.cancellationRequested
-          ? { status: "cancelled" as const }
-          : record.pendingRunOutcome;
+        const outcome =
+          record.cancellationRequested || event.aborted || record.stopBeforeSettle
+            ? { status: "cancelled" as const }
+            : record.pendingRunOutcome;
         record.pendingRunOutcome = undefined;
+        record.pendingSdkToolCallIds?.clear();
         // pi captures `aborted` before awaiting extension agent_settled handlers, so a Stop
         // the driver accepted during them counts too, even if another prompt came since.
         const stopped = event.aborted || record.stopBeforeSettle;
@@ -2928,7 +3257,51 @@ export class SessionSupervisor {
             ? newestReplyEntryId(record.session.sessionManager.getBranch())
             : undefined,
         );
-        const runId = record.runningRunId;
+        const active = record.activeTerminalRun;
+        const runId = active?.runId ?? record.runningRunId;
+        record.activeTerminalRun = undefined;
+        if (
+          active &&
+          record.session &&
+          active.nativeSessionId === record.session.sessionId &&
+          sessionKey(active.sessionRef) === sessionKey(record.ref)
+        ) {
+          const terminal: SessionTerminalRun = {
+            runId: active.runId,
+            generation: active.generation,
+            nativeSessionId: active.nativeSessionId,
+            branchLeafId: record.session.sessionManager.getBranch().at(-1)?.id ?? "",
+            settledAt: timestamp,
+            outcome:
+              stopped || outcome?.status === "cancelled"
+                ? "stopped"
+                : outcome?.status === "completed"
+                  ? "completed"
+                  : outcome?.status === "failed"
+                    ? "failed"
+                    : "incomplete",
+          };
+          const ref = { ...active.sessionRef };
+          record.terminalWrite = (active.allocation ?? Promise.resolve(active.generation))
+            .then(async (generation) => {
+              if (generation === undefined) return;
+              const confirmed = { ...terminal, generation };
+              const accepted = await this.catalogs.sessions.settleRun(ref, confirmed);
+              if (
+                accepted &&
+                !record.activeTerminalRun &&
+                (record.runGeneration ?? generation) === generation &&
+                sessionKey(record.ref) === sessionKey(ref)
+              )
+                record.terminalRun = confirmed;
+            })
+            .catch((error: unknown) => {
+              console.warn(
+                `[pi-sdk-driver] terminal run remains durable-unconfirmed for ${sessionKey(ref)}:`,
+                error,
+              );
+            });
+        }
         record.runningRunId = undefined;
         record.status = outcome?.status === "failed" ? "failed" : "idle";
         record.updatedAt = timestamp;
@@ -3068,6 +3441,7 @@ export class SessionSupervisor {
   }
 
   private async persistSnapshot(record: ManagedSessionRecord): Promise<void> {
+    await record.terminalWrite;
     const snapshot = buildSnapshot(record);
     await this.catalogs.sessions.upsertSession({
       sessionRef: snapshot.ref,

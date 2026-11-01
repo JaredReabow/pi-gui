@@ -1,6 +1,8 @@
-appId: com.pi-gui.desktop
-productName: pi-gui
-copyright: Copyright 2026 Matthew Lam
+appId: com.pi-gui.desktop.candidate
+productName: pi-gui Candidate
+# The upstream MIT notice is preserved. The distribution owner's copyright
+# remains an explicit publication decision.
+copyright: Copyright 2026 Matthew Lam; distribution copyright unresolved
 electronVersion: 37.10.3
 
 directories:
@@ -54,9 +56,9 @@ mac:
 
 linux:
   category: Development
-  executableName: pi-gui
-  maintainer: Matthew Lam <minghinmatthew.lam@gmail.com>
-  vendor: pi-gui
+  executableName: pi-gui-candidate
+  maintainer: Distribution maintainer unresolved <maintainer@invalid.example>
+  vendor: pi-gui-candidate
   synopsis: Codex-style desktop app for the pi coding agent
   description: A native desktop interface for pi coding agent sessions, workspaces, and tools.
   target:
@@ -69,7 +71,7 @@ linux:
 
 deb:
   artifactName: ${productName}_${version}_${arch}.${ext}
-  packageName: pi-gui
+  packageName: pi-gui-candidate
   packageCategory: devel
   priority: optional
   afterRemove: resources/linux/after-remove.sh
@@ -86,7 +88,7 @@ deb:
     - libgbm1
 
 win:
-  executableName: pi-gui
+  executableName: pi-gui-candidate
   # Keep icon/version metadata editing; signing is optional without credentials.
   signAndEditExecutable: true
   target:
@@ -118,8 +120,3 @@ dmg:
   window:
     width: 540
     height: 380
-
-publish:
-  provider: github
-  owner: minghinmatthewlam
-  repo: pi-gui

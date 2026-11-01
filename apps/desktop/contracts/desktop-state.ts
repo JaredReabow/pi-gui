@@ -1,4 +1,24 @@
 import type {
+  SessionInitiatingOrigin,
+  ChildOriginMetadata,
+  ChildSelectedConfiguration,
+} from "./child-selection";
+import type {
+  ActivityIndicatorPreferenceSnapshot,
+  AllThreadsSort,
+  FolderPreference,
+  PersistedActivityIndicatorPreference,
+} from "./sidebar-preferences";
+import type { ProjectAppearanceProjection } from "./project-identity";
+export type {
+  ActivityIndicatorPreferenceSnapshot,
+  ActivityIndicatorPreferenceSource,
+  ActivityIndicatorStyle,
+  PersistedActivityIndicatorPreference,
+  PersistedActivityIndicatorPreferenceSource,
+} from "./sidebar-preferences";
+export type { ProjectAccentColor, ProjectAppearanceProjection } from "./project-identity";
+import type {
   ExtensionFlagValues,
   HostUiRequest,
   SessionConfig,
@@ -101,6 +121,10 @@ export interface QueuedComposerMessage {
 }
 
 export interface SessionRecord {
+  /** Host-stamped creation route. Absence means unknown; never infer from child correlation. */
+  readonly initiatingOrigin?: SessionInitiatingOrigin;
+  /** Host-observed creation instant; absent for legacy/imported sessions with no source. */
+  readonly createdAt?: string;
   readonly id: string;
   readonly title: string;
   readonly updatedAt: string;
@@ -116,7 +140,7 @@ export interface SessionRecord {
 }
 
 export type OrchestrationChildThreadStatus =
-  "queued" | "running" | "waiting" | "complete" | "failed";
+  "queued" | "running" | "waiting" | "complete" | "failed" | "cancelled";
 export type OrchestrationSupervisionGate = "continue" | "stop" | "wake";
 export type OrchestrationSupervisionStatus = "monitoring" | "attention" | "stopped";
 export type OrchestrationEvidenceKind =
@@ -183,6 +207,8 @@ export interface OrchestrationChildTranscriptMessage {
 }
 
 export interface OrchestrationChildThread {
+  readonly origin?: ChildOriginMetadata;
+  readonly selectedConfig?: ChildSelectedConfiguration;
   readonly id: string;
   readonly sourceToolCallId?: string;
   readonly parentWorkspaceId: string;
@@ -201,10 +227,13 @@ export interface OrchestrationChildThread {
 }
 
 /**
- * One parent/child link as the window draws it: ids, title and status only, never the
+ * One parent/child link as the window draws it: identity, status and host metadata, never the
  * child's goal, transcript or evidence. Main derives these from orchestrationChildren.
  */
 export interface ChildThreadLink {
+  readonly origin?: ChildOriginMetadata;
+  readonly selectedConfig?: ChildSelectedConfiguration;
+  readonly createdAt?: string;
   readonly id: string;
   readonly parentWorkspaceId: string;
   readonly parentSessionId: string;
@@ -230,7 +259,10 @@ export function childThreadLinksOf(
         link.childWorkspaceId === child.childWorkspaceId &&
         link.childSessionId === child.childSessionId &&
         link.title === child.title &&
-        link.status === child.status
+        link.status === child.status &&
+        link.createdAt === child.createdAt &&
+        link.origin === child.origin &&
+        link.selectedConfig === child.selectedConfig
       );
     });
   if (same) return previous;
@@ -242,6 +274,9 @@ export function childThreadLinksOf(
     childSessionId: child.childSessionId,
     title: child.title,
     status: child.status,
+    origin: child.origin,
+    selectedConfig: child.selectedConfig,
+    createdAt: child.createdAt,
   }));
 }
 
@@ -467,6 +502,11 @@ export interface StartupDiagnostic {
   readonly workspacePath?: string;
 }
 
+export interface SidebarAppearanceSnapshot {
+  readonly projectByWorkspaceId: Readonly<Record<string, ProjectAppearanceProjection>>;
+  readonly activityIndicatorPreference: ActivityIndicatorPreferenceSnapshot;
+}
+
 export interface DesktopAppState {
   readonly workspaces: readonly WorkspaceRecord[];
   readonly worktreesByWorkspace: Readonly<Record<string, readonly WorktreeRecord[]>>;
@@ -513,6 +553,10 @@ export interface DesktopAppState {
   readonly threadGrouping: ThreadGrouping;
   /** Folder groups the user collapsed in the sidebar, by workspace id. */
   readonly collapsedWorkspaceIds: readonly string[];
+  readonly folderPreferencesByWorkspace?: Readonly<Record<string, FolderPreference>>;
+  readonly allThreadsSort?: AllThreadsSort;
+  readonly createdAtBySession?: Readonly<Record<string, string>>;
+  readonly sidebarAppearance?: SidebarAppearanceSnapshot;
   readonly enableTransparency: boolean;
   readonly startupDiagnostics: readonly StartupDiagnostic[];
   readonly revision: number;
@@ -591,5 +635,14 @@ export interface DesktopAppViewState {
 export function getSelectedSession(state: DesktopAppState): SessionRecord | undefined {
   return getSelectedWorkspace(state)?.sessions.find(
     (session) => session.id === state.selectedSessionId,
+  );
+}
+
+/** Human message text on the selected branch only; excludes tools, assistant and custom rows. */
+export function desktopState_humanInputHistory(
+  transcript: readonly TranscriptMessage[],
+): readonly string[] {
+  return transcript.flatMap((row) =>
+    row.kind === "message" && row.role === "user" ? [row.text] : [],
   );
 }

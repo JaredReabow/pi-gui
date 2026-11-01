@@ -14,6 +14,10 @@ import type {
   ForkSessionOptions,
   ForkSessionResult,
   HostUiResponse,
+  InlineWorkerDriverCapability,
+  InlineWorkerHostCapability,
+  InlineWorkerModelRequest,
+  InlineWorkerRunHandle,
   SessionDriver,
   SessionEventListener,
   SessionModelSelection,
@@ -35,7 +39,7 @@ import { generateThreadTitle, type GenerateThreadTitleOptions } from "./thread-t
 
 export interface PiSdkDriverConfig extends PiSdkDriverOptions, RuntimeSupervisorOptions {}
 
-export class PiSdkDriver implements SessionDriver {
+export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability {
   private readonly supervisor: SessionSupervisor;
   private readonly agentDir: string;
   private readonly generateThreadTitleOverride:
@@ -99,6 +103,31 @@ export class PiSdkDriver implements SessionDriver {
 
   cancelCurrentRun(sessionRef: SessionRef): Promise<void> {
     return this.supervisor.cancelCurrentRun(sessionRef);
+  }
+
+  createInlineWorkerHostCapability(
+    parent: SessionRef,
+    parentRunId: string,
+    parentToolCallId: string,
+    signal: AbortSignal,
+  ): Promise<InlineWorkerHostCapability> {
+    return this.supervisor.createInlineWorkerHostCapability(
+      parent,
+      parentRunId,
+      parentToolCallId,
+      signal,
+    );
+  }
+
+  startInlineWorker(
+    request: InlineWorkerModelRequest,
+    host: InlineWorkerHostCapability,
+  ): InlineWorkerRunHandle {
+    return this.supervisor.startInlineWorker(request, host);
+  }
+
+  cancelInlineWorkersForParent(parent: SessionRef): Promise<void> {
+    return this.supervisor.cancelInlineWorkersForParent(parent);
   }
 
   setSessionModel(sessionRef: SessionRef, selection: SessionModelSelection): Promise<void> {

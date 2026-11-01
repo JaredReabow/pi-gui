@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import {
+  confirmModelSwitch,
   commitAllInGitRepo,
   desktopShortcut,
   getDesktopState,
@@ -587,6 +588,7 @@ test("shows and selects GPT-6 Sol from the upgraded Pi model catalog", async ({}
     await expect(dropdown).toContainText("GPT-6 Sol");
     await expect(dropdown).toContainText("GPT-6 Luna");
     await dropdown.getByRole("button", { name: /GPT-6 Sol/ }).click();
+    await confirmModelSwitch(window);
     await expect(badge).toHaveText("openai:gpt-6-sol");
     await expect(
       window.locator(".composer").getByRole("button", { name: "medium", exact: true }),

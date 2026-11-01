@@ -41,7 +41,18 @@ export interface SessionQueuedMessage {
  */
 export type SessionRunOutcome = "completed" | "stopped" | "failed" | "incomplete";
 
+/** An authoritative settlement bound to one native branch and a durable run generation. */
+export interface SessionTerminalRun {
+  readonly runId: string;
+  readonly generation: number;
+  readonly nativeSessionId: string;
+  readonly branchLeafId: string;
+  readonly settledAt: string;
+  readonly outcome: SessionRunOutcome;
+}
+
 export interface SessionSnapshot {
+  readonly terminalRun?: SessionTerminalRun;
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;
   readonly title: string;

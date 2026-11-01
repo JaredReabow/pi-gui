@@ -42,6 +42,16 @@ function markLayout(pane: HTMLDivElement | null, layout: "settling" | "settled")
   if (pane && pane.dataset.layout !== layout) pane.dataset.layout = layout;
 }
 
+function sameTimelinePosition(left: TimelinePosition, right: TimelinePosition): boolean {
+  if (left.kind !== right.kind) return false;
+  return (
+    left.kind === "following" ||
+    (right.kind === "reading" &&
+      left.anchor.rowId === right.anchor.rowId &&
+      Math.abs(left.anchor.offsetWithinRow - right.anchor.offsetWithinRow) < 0.5)
+  );
+}
+
 /** The only writer of timeline scroll position. Size changes never select a new intent. */
 export function useTimelineViewport({
   sessionKey,
@@ -69,6 +79,7 @@ export function useTimelineViewport({
     activityMarker: "",
     newActivity: false,
     expectedScrollTop: null as number | null,
+    ignoreNextScroll: 0,
     pendingNavigation: true,
   });
   const [, setVersion] = useState(0);
@@ -99,6 +110,7 @@ export function useTimelineViewport({
       activityMarker: "",
       newActivity: false,
       expectedScrollTop: null,
+      ignoreNextScroll: 0,
       pendingNavigation: true,
     };
   }
@@ -311,6 +323,13 @@ export function useTimelineViewport({
     let draggingScrollbar = false;
     const read = () => {
       const current = model.current;
+      // Ignore the first scroll event caused by controller-owned navigation.
+      // It can otherwise reinterpret that destination against the previous
+      // layout and select the preceding turn before the new layout commits.
+      if (current.ignoreNextScroll > 0) {
+        current.ignoreNextScroll -= 1;
+        return;
+      }
       if (
         current.expectedScrollTop !== null &&
         Math.abs(pane.scrollTop - current.expectedScrollTop) < 1
@@ -332,6 +351,7 @@ export function useTimelineViewport({
       )
         return;
       const anchor = anchorAt(current.layout, pane.scrollTop);
+      const restoring = current.state.kind === "restoring";
       const previous = destination(current.state);
       const previousTop =
         previous.kind === "reading" ? resolveAnchor(current.layout, previous.anchor) : null;
@@ -345,7 +365,11 @@ export function useTimelineViewport({
       else if (anchor) current.state = { kind: "reading", anchor };
       current.expectedScrollTop = null;
       savePosition();
-      schedule();
+      // Wheel and bounce events can keep arriving after the viewport has
+      // reached the same anchor. Scheduling another render for each one creates
+      // a self-sustaining settling loop even when the visible rows are stable.
+      // Geometry changes already schedule through row measurement.
+      if (restoring || !sameTimelinePosition(previous, destination(current.state))) schedule();
     };
     const intent = (leaveBottom: boolean) => {
       const current = model.current;
@@ -411,22 +435,30 @@ export function useTimelineViewport({
     (element: HTMLElement) => {
       const pane = paneRef.current;
       if (!pane || !pane.contains(element)) return;
-      const top =
-        pane.scrollTop +
-        element.getBoundingClientRect().top -
-        pane.getBoundingClientRect().top -
-        pane.clientHeight / 2;
-      const anchor = anchorAt(model.current.layout, Math.max(0, top));
-      if (anchor) model.current.state = { kind: "reading", anchor };
-      model.current.pendingNavigation = true;
-      model.current.userIntent = 0;
-      schedule();
+      const commit = () => {
+        const top =
+          pane.scrollTop + element.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+        const anchor = anchorAt(model.current.layout, Math.max(0, top));
+        if (anchor) model.current.state = { kind: "reading", anchor };
+        model.current.pendingNavigation = true;
+        model.current.userIntent = 0;
+        model.current.ignoreNextScroll = 1;
+        schedule();
+      };
+      commit();
+      // The search surface may have just switched from virtualized rows to
+      // the full transcript. Correct once after that geometry commits so a
+      // match cannot resolve against the previous, partial layout.
+      requestAnimationFrame(() => {
+        if (element.isConnected) commit();
+      });
     },
     [paneRef, schedule],
   );
   return {
     totalHeight,
     visibleRows: placements,
+    scrollTop: pane?.scrollTop ?? 0,
     layoutGeneration: current.generation,
     showJumpToLatest,
     attachPane,

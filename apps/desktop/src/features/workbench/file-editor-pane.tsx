@@ -195,6 +195,7 @@ export function FileEditorPane({
           aria-label="File path"
           className="file-editor__breadcrumb"
           data-testid="file-editor-breadcrumb"
+          tabIndex={0}
         >
           {breadcrumbSegments(activePath).map((segment, index, segments) => (
             <span key={`${segment}-${index}`}>
@@ -206,7 +207,7 @@ export function FileEditorPane({
           ))}
         </nav>
       ) : null}
-      <div className="file-editor__body">
+      <div className="file-editor__body" tabIndex={0} aria-label="File contents">
         {renderEditorBody({
           activePath,
           lineMark: showSource ? lineMark : null,

@@ -62,6 +62,8 @@ export interface WorkspaceOwnerHost {
   workspaceState(): WorkspaceStateView;
   setActiveSession(sessionRef: SessionRef): void;
   seedSession(snapshot: SessionSnapshot): void;
+  /** Records successful human-created fork/worktree metadata without clearing any transcript. */
+  recordSessionCreation(sessionRef: SessionRef): void;
   unpinSession(sessionRef: SessionRef): void;
   refreshState(options?: RefreshStateOptions): Promise<DesktopAppState>;
   emit(): DesktopAppState;

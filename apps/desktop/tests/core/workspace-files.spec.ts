@@ -28,12 +28,22 @@ async function expectConversationFileExplorerSplit(window: Page): Promise<void> 
   }
 
   expect(conversationBox.x + conversationBox.width).toBeLessThanOrEqual(editorBox.x + 2);
-  expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(explorerBox.x + 2);
-  expect(Math.abs(editorBox.y - explorerBox.y)).toBeLessThan(8);
+  const workbenchBox = await window.getByTestId("file-workbench").boundingBox();
+  expect(workbenchBox).not.toBeNull();
+  if (!workbenchBox) {
+    throw new Error("Expected Files workbench bounds");
+  }
+  if (workbenchBox.width <= 600) {
+    expect(explorerBox.y + explorerBox.height).toBeLessThanOrEqual(editorBox.y + 2);
+    expect(Math.abs(editorBox.x - explorerBox.x)).toBeLessThan(2);
+  } else {
+    expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(explorerBox.x + 2);
+    expect(Math.abs(editorBox.y - explorerBox.y)).toBeLessThan(8);
+  }
   await expect(window.locator(".diff-panel")).toHaveCount(0);
 }
 
-test("Files workbench puts the explorer to the right of an open file pane", async () => {
+test("Files workbench positions the explorer according to its container width", async () => {
   test.setTimeout(45_000);
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("plain-files-workspace");

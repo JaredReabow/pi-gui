@@ -19,7 +19,7 @@ import tokyoNight from "@shikijs/themes/tokyo-night";
 import { useSyncExternalStore } from "react";
 import { createHighlighterCore, type HighlighterCore, type ThemeRegistration } from "shiki/core";
 import { createOnigurumaEngine } from "shiki/engine/oniguruma";
-import type { SyntaxThemeId } from "../../contracts/theme";
+import { ensureContrast, type SyntaxThemeId } from "../../contracts/theme";
 import draculaLight from "./syntax-themes/dracula-light.json";
 import nordLight from "./syntax-themes/nord-light.json";
 import tokyoNightLight from "./syntax-themes/tokyo-night-light.json";
@@ -152,14 +152,20 @@ export function highlightLine(
   const themeName = syntaxThemes[theme].name ?? theme;
   // The editor foreground is inherited from the surrounding text, so plain
   // tokens carry no colour and follow the app's --code-ink.
-  const foreground = highlighter.getTheme(themeName).fg.toLowerCase();
+  const definition = highlighter.getTheme(themeName);
+  const foreground = definition.fg.toLowerCase();
+  const background = definition.bg.toLowerCase();
   const tokens = (
     highlighter.codeToTokensBase(line, { lang: language, theme: themeName })[0] ?? []
   ).map((token): HighlightToken => {
     const color = token.color?.toLowerCase();
+    // Fixture and third-party themes occasionally use colours tuned only for
+    // their own editor background. Reserve extra contrast for the darker
+    // derived code surface so syntax remains legible in every preset.
+    const fittedColor = color ? ensureContrast(color, foreground, background, 5) : undefined;
     return {
       content: token.content,
-      ...(color && color !== foreground ? { color } : {}),
+      ...(fittedColor && fittedColor !== foreground ? { color: fittedColor } : {}),
       ...(token.fontStyle !== undefined && token.fontStyle & ITALIC
         ? { fontStyle: "italic" as const }
         : {}),

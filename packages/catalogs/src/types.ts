@@ -1,6 +1,11 @@
-import type { SessionRef, SessionStatus, WorkspaceId } from "@pi-gui/session-driver";
+import type {
+  SessionRef,
+  SessionStatus,
+  SessionTerminalRun,
+  WorkspaceId,
+} from "@pi-gui/session-driver";
 
-export type { SessionRef, SessionStatus, WorkspaceId };
+export type { SessionRef, SessionStatus, SessionTerminalRun, WorkspaceId };
 
 export interface WorkspaceCatalogEntry {
   workspaceId: WorkspaceId;
@@ -49,6 +54,7 @@ export interface SessionCatalogEntry {
    * by setStoppedReplyId; reads attach it, and entry writes ignore it.
    */
   stoppedReplyId?: string;
+  terminalRun?: SessionTerminalRun;
 }
 
 export interface WorkspaceCatalogSnapshot {

@@ -393,3 +393,99 @@ await test("a catalog that kept the stopped-reply mark on its entry still reads 
     assert.equal((await reopened.sessions.getSession(sessionRef))?.stoppedReplyId, "reply-1");
   });
 });
+
+await test("terminal run survives reopen without a reply, rejects stale settlement and advances generations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminal-run-"));
+  const catalogFilePath = join(root, "catalog.json");
+  const store = new JsonCatalogStore({ catalogFilePath });
+  const ref = { workspaceId: "terminal-workspace", sessionId: "terminal-session" };
+  await store.sessions.upsertSession({
+    sessionRef: ref,
+    workspaceId: ref.workspaceId,
+    title: "Cancelled",
+    updatedAt: "2026-10-31T00:00:00Z",
+    status: "idle",
+  });
+  const generation = await store.sessions.beginRun(ref, "run-a");
+  const terminal = {
+    runId: "run-a",
+    generation,
+    nativeSessionId: ref.sessionId,
+    branchLeafId: "input-only",
+    settledAt: "2026-10-31T00:00:00Z",
+    outcome: "stopped" as const,
+  };
+  assert.equal(await store.sessions.settleRun(ref, terminal), true);
+  const reopened = new JsonCatalogStore({ catalogFilePath });
+  assert.deepEqual((await reopened.sessions.getSession(ref))?.terminalRun, terminal);
+  // Ordinary sync/entry writes cannot fabricate or erase a settlement.
+  const entry = (await reopened.sessions.getSession(ref))!;
+  await reopened.sessions.upsertSession({
+    ...entry,
+    terminalRun: { ...terminal, outcome: "completed" },
+  });
+  assert.deepEqual((await store.sessions.getSession(ref))?.terminalRun, terminal);
+  const next = await reopened.sessions.beginRun(ref, "run-b");
+  assert.equal(next, generation + 1);
+  assert.equal((await store.sessions.getSession(ref))?.terminalRun, undefined);
+  assert.equal(await store.sessions.settleRun(ref, terminal), false);
+  assert.equal(
+    await store.sessions.settleRun(ref, {
+      ...terminal,
+      runId: "run-b",
+      generation: next,
+      outcome: "completed",
+    }),
+    true,
+  );
+  assert.equal(
+    await store.sessions.settleRun(ref, { ...terminal, runId: "run-b", generation: next }),
+    false,
+  );
+  assert.equal((await store.sessions.getSession(ref))?.terminalRun?.outcome, "completed");
+});
+
+await test("legacy catalogs omit identified terminal state and malformed identity records fail without rewriting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminal-codec-"));
+  const catalogFilePath = join(root, "catalog.json");
+  const ref = { workspaceId: "ws", sessionId: "session" };
+  const legacy = {
+    version: 2,
+    workspaces: [],
+    sessions: [
+      { sessionRef: ref, workspaceId: "ws", title: "Legacy", updatedAt: timestamp, status: "idle" },
+    ],
+    worktrees: [],
+    sessionFiles: {},
+    stoppedReplies: {},
+  };
+  await writeFile(catalogFilePath, JSON.stringify(legacy));
+  assert.equal(
+    (await new JsonCatalogStore({ catalogFilePath }).sessions.getSession(ref))?.terminalRun,
+    undefined,
+  );
+  for (const bad of [
+    { runId: "r", generation: 0 },
+    { runId: "r", generation: 1, terminalRun: { runId: "other", generation: 1 } },
+    {
+      runId: "r",
+      generation: 1,
+      terminalRun: {
+        runId: "r",
+        generation: 1,
+        nativeSessionId: "session",
+        branchLeafId: "",
+        settledAt: timestamp,
+        outcome: "cancelled",
+      },
+    },
+  ]) {
+    const original = JSON.stringify({ ...legacy, runs: { "ws:session": bad } });
+    await writeFile(catalogFilePath, original);
+    await assert.rejects(
+      new JsonCatalogStore({ catalogFilePath }).sessions.listSessions(),
+      /Invalid catalog file/,
+    );
+    assert.equal(await readFile(catalogFilePath, "utf8"), original);
+  }
+});

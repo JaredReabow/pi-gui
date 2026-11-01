@@ -1,3 +1,9 @@
+import type { EffectiveChildModelSettings } from "../contracts/child-selection";
+import type {
+  FolderPreference,
+  AllThreadsSort,
+  MarkAllThreadsReadInput,
+} from "../contracts/sidebar-preferences";
 import type {
   ExtensionViewOpenFile,
   DesktopExtensionViewInfo,
@@ -21,6 +27,9 @@ import {
   type NewMcpServerInput,
   type ChangedFilesResult,
   type DesktopNotificationPermissionStatus,
+  type SupportDevelopmentDismissal,
+  type SupportDevelopmentOptionId,
+  type SupportDevelopmentState,
   type WorkspaceFilePreview,
   type PiDesktopCommand,
   type PiDesktopStateListener,
@@ -31,6 +40,19 @@ import {
   type TerminalExitEvent,
   type TerminalPanelSnapshot,
   type TerminalSize,
+  type PendingComposerDraftCaptureHandler,
+  type PendingComposerDraftCaptureRequest,
+  type PendingComposerDraftCaptureResponse,
+  type PendingComposerDraftFlushHandler,
+  type PendingComposerDraftFlushRequest,
+  type PendingComposerDraftFlushResponse,
+  pendingComposerDraft_aggregateCaptureHandlers,
+  pendingComposerDraft_aggregateFlushHandlers,
+  pendingComposerDraft_decodeCaptureRequest,
+  pendingComposerDraft_decodeFlushRequest,
+  telemetryConsentIpc_decodeStatus,
+  type TelemetryConsentIpcStatus,
+  type TelemetryConsentIpcUpdate,
 } from "../contracts/ipc";
 import type { ExtensionActionEffect, ExtensionActionRequest } from "../contracts/extension-actions";
 import type { ClipboardImageRead } from "../contracts/composer-attachments";
@@ -110,6 +132,41 @@ ipcRenderer.on(desktopIpc.flushPendingComposerDraft, (_event, requestId: number)
     .then(() => ipcRenderer.invoke(desktopIpc.pendingComposerDraftFlushed, requestId))
     .catch((error: unknown) => {
       console.error("[preload] pending draft flush acknowledgement failed", error);
+    });
+});
+
+const pendingDraftCaptureHandlers = new Set<PendingComposerDraftCaptureHandler>();
+const pendingDraftResultFlushHandlers = new Set<PendingComposerDraftFlushHandler>();
+
+ipcRenderer.on(desktopIpc.capturePendingComposerDraft, (_event, raw: unknown) => {
+  let request: PendingComposerDraftCaptureRequest;
+  try {
+    request = pendingComposerDraft_decodeCaptureRequest(raw);
+  } catch {
+    return;
+  }
+  void pendingComposerDraft_aggregateCaptureHandlers(request, pendingDraftCaptureHandlers)
+    .then((response: PendingComposerDraftCaptureResponse) =>
+      ipcRenderer.invoke(desktopIpc.pendingComposerDraftCaptured, response),
+    )
+    .catch((error: unknown) => {
+      console.error("[preload] draft capture acknowledgement failed", error);
+    });
+});
+
+ipcRenderer.on(desktopIpc.flushPendingComposerDraftResult, (_event, raw: unknown) => {
+  let request: PendingComposerDraftFlushRequest;
+  try {
+    request = pendingComposerDraft_decodeFlushRequest(raw);
+  } catch {
+    return;
+  }
+  void pendingComposerDraft_aggregateFlushHandlers(request, pendingDraftResultFlushHandlers)
+    .then((response: PendingComposerDraftFlushResponse) =>
+      ipcRenderer.invoke(desktopIpc.pendingComposerDraftFlushedResult, response),
+    )
+    .catch((error: unknown) => {
+      console.error("[preload] draft flush acknowledgement failed", error);
     });
 });
 
@@ -272,6 +329,20 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.archiveSession, target) as Promise<DesktopAppState>,
   unarchiveSession: (target: WorkspaceSessionTarget) =>
     ipcRenderer.invoke(desktopIpc.unarchiveSession, target) as Promise<DesktopAppState>,
+  markAllThreadsRead: (input: MarkAllThreadsReadInput) =>
+    ipcRenderer.invoke(desktopIpc.markAllThreadsRead, input) as Promise<DesktopAppState>,
+  setFolderPreference: (workspaceId: string, preference: FolderPreference) =>
+    ipcRenderer.invoke(desktopIpc.setFolderPreference, {
+      workspaceId,
+      preference,
+    }) as Promise<DesktopAppState>,
+  setAllThreadsSort: (sort: AllThreadsSort) =>
+    ipcRenderer.invoke(desktopIpc.setAllThreadsSort, sort) as Promise<DesktopAppState>,
+  getEffectiveChildModelSettings: (workspaceId: string) =>
+    ipcRenderer.invoke(
+      desktopIpc.getEffectiveChildModelSettings,
+      workspaceId,
+    ) as Promise<EffectiveChildModelSettings>,
   markSessionRead: (target: WorkspaceSessionTarget) =>
     ipcRenderer.invoke(desktopIpc.markSessionRead, target) as Promise<DesktopAppState>,
   setSessionPinned: (target: WorkspaceSessionTarget, pinned: boolean) =>
@@ -582,6 +653,18 @@ contextBridge.exposeInMainWorld("piApp", {
       pendingDraftFlushHandlers.delete(handler);
     };
   },
+  onPendingComposerDraftCapture: (handler: PendingComposerDraftCaptureHandler) => {
+    pendingDraftCaptureHandlers.add(handler);
+    return () => {
+      pendingDraftCaptureHandlers.delete(handler);
+    };
+  },
+  onPendingComposerDraftFlushResult: (handler: PendingComposerDraftFlushHandler) => {
+    pendingDraftResultFlushHandlers.add(handler);
+    return () => {
+      pendingDraftResultFlushHandlers.delete(handler);
+    };
+  },
   submitComposer: (text: string, options?: { readonly deliverAs?: "steer" | "followUp" }) =>
     ipcRenderer.invoke(desktopIpc.submitComposer, text, options) as Promise<DesktopAppState>,
   getSessionTree: (target: WorkspaceSessionTarget) =>
@@ -619,6 +702,26 @@ contextBridge.exposeInMainWorld("piApp", {
   toggleWindowMaximize: () => ipcRenderer.invoke(desktopIpc.toggleWindowMaximize) as Promise<void>,
   minimizeWindow: () => ipcRenderer.send(desktopIpc.minimizeWindow),
   closeWindow: () => ipcRenderer.send(desktopIpc.closeWindow),
+  getSupportDevelopment: () =>
+    ipcRenderer.invoke(desktopIpc.getSupportDevelopment) as Promise<SupportDevelopmentState>,
+  openSupportDevelopment: (optionId: SupportDevelopmentOptionId) =>
+    ipcRenderer.invoke(desktopIpc.openSupportDevelopment, optionId) as Promise<void>,
+  dismissSupportDevelopment: (choice: SupportDevelopmentDismissal) =>
+    ipcRenderer.invoke(
+      desktopIpc.dismissSupportDevelopment,
+      choice,
+    ) as Promise<SupportDevelopmentState>,
+  getTelemetryConsentStatus: () =>
+    ipcRenderer.invoke(desktopIpc.getTelemetryConsentStatus) as Promise<TelemetryConsentIpcStatus>,
+  setTelemetryConsent: (request: TelemetryConsentIpcUpdate) =>
+    ipcRenderer.invoke(
+      desktopIpc.setTelemetryConsent,
+      request,
+    ) as Promise<TelemetryConsentIpcStatus>,
+  onTelemetryConsentChanged: (listener: (status: TelemetryConsentIpcStatus) => void) =>
+    subscribeIpc<unknown>(desktopIpc.telemetryConsentChanged, (raw) =>
+      listener(telemetryConsentIpc_decodeStatus(raw)),
+    ),
   openExternal: (url: string) => ipcRenderer.invoke(desktopIpc.openExternal, url) as Promise<void>,
   getThemeMode: () =>
     ipcRenderer.invoke(desktopIpc.getThemeMode) as Promise<"system" | "light" | "dark">,

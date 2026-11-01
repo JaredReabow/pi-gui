@@ -1,10 +1,13 @@
+import type { ReactNode } from "react";
 import type { SessionRecord } from "../../../contracts/desktop-state";
 import { ThreadActionsMenu } from "./thread-actions";
 import type { ThreadAction } from "./thread-actions";
 import type { ThreadMenuState } from "./hooks/use-thread-actions";
 import { formatRelativeTime } from "../../lib/string-utils";
 
-interface ChatHeaderActionsProps {
+export interface ChatHeaderActionsProps {
+  /** Composer-owned selector/confirmation surface; the header supplies placement only. */
+  readonly modelSelector?: ReactNode;
   readonly session: SessionRecord;
   readonly runningLabel: string;
   readonly threadMenu: ThreadMenuState;
@@ -21,9 +24,11 @@ export function ChatHeaderActions({
   runningLabel,
   threadMenu,
   actions,
+  modelSelector,
 }: ChatHeaderActionsProps) {
   return (
     <>
+      {modelSelector}
       <div className="chat-header__status">
         {session.status === "running" ? runningLabel : formatRelativeTime(session.updatedAt)}
       </div>

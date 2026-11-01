@@ -5,6 +5,8 @@ import {
   type KeyboardEvent,
   type MutableRefObject,
   type SetStateAction,
+  useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -24,8 +26,16 @@ import { parseTreeComposerCommand } from "../composer-commands";
 import { formatAnnotatedPrompt } from "../annotations/annotation-prompt";
 import type { TranscriptAnnotations } from "../annotations/use-transcript-annotations";
 import type { PiDesktopApi } from "../../../../contracts/ipc";
+import {
+  promptHistory_create,
+  promptHistory_historyKey,
+  promptHistory_navigate,
+  promptHistory_reset,
+} from "../prompt-history";
 
 interface UseSessionComposerParams {
+  /** Selected-thread human messages, in branch order; recall policy belongs to the composer. */
+  readonly humanInputHistory?: readonly string[];
   readonly api: PiDesktopApi | undefined;
   readonly snapshot: DesktopAppState | null;
   readonly setSnapshot: Dispatch<SetStateAction<DesktopAppState | null>>;
@@ -50,6 +60,7 @@ const EMPTY_ID_SET: ReadonlySet<string> = new Set();
 
 export function useSessionComposer(params: UseSessionComposerParams) {
   const {
+    humanInputHistory = [],
     api,
     snapshot,
     setSnapshot,
@@ -68,6 +79,15 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     onNewThreadComposerError,
     annotations,
   } = params;
+  const promptHistoryStateRef = useRef(promptHistory_create());
+  const promptHistorySessionIdRef = useRef("");
+  const promptHistoryKey = promptHistory_historyKey(humanInputHistory);
+  const selectedSessionId = selectedSession?.id ?? "";
+
+  useEffect(() => {
+    promptHistoryStateRef.current = promptHistory_reset();
+    promptHistorySessionIdRef.current = selectedSessionId;
+  }, [promptHistoryKey, selectedSessionId]);
 
   // Attachments optimistically hidden while their submit is in flight. Scoped to the
   // submitted ids (not a blanket flag) because the submit IPC resolves only after the
@@ -364,6 +384,40 @@ export function useSessionComposer(params: UseSessionComposerParams) {
 
     if (handleSlashKeyDown(event)) {
       return;
+    }
+
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      if (promptHistorySessionIdRef.current !== selectedSessionId) {
+        promptHistoryStateRef.current = promptHistory_reset();
+        promptHistorySessionIdRef.current = selectedSessionId;
+      }
+      const navigation = promptHistory_navigate({
+        state: promptHistoryStateRef.current,
+        history: humanInputHistory,
+        historyKey: promptHistoryKey,
+        draft: event.currentTarget.value,
+        key: event.key,
+        selectionStart: event.currentTarget.selectionStart,
+        selectionEnd: event.currentTarget.selectionEnd,
+        isComposing: event.nativeEvent.isComposing,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        menuOpen: false,
+      });
+      promptHistoryStateRef.current = navigation.state;
+      if (navigation.handled) {
+        event.preventDefault();
+        setComposerDraft(navigation.draft);
+        requestAnimationFrame(() => {
+          composerRef.current?.setSelectionRange(
+            navigation.selectionStart,
+            navigation.selectionEnd,
+          );
+        });
+        return;
+      }
     }
 
     if (

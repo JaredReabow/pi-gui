@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
-import type { AgentSessionRuntime } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  type AgentSession,
+  type AgentSessionRuntime,
+} from "@earendil-works/pi-coding-agent";
 import type { SessionDriverEvent } from "@pi-gui/session-driver";
+import { sessionKey } from "@pi-gui/session-driver";
 import { PiSdkDriver } from "../dist/pi-sdk-driver.js";
 import { createAgentSessionRuntimeWithNpmFallback } from "../dist/npm-package-fallback.js";
 
@@ -107,13 +112,14 @@ await test("Stop pressed while Pi is still starting a run cancels that run", asy
     agentDir,
     catalogFilePath: join(root, "catalogs.json"),
     createAgentSessionRuntimeImpl: async (runtimeOptions) => {
+      const resolvedOptions = runtimeOptions ?? {};
       runtime = await createAgentSessionRuntimeWithNpmFallback({
-        ...runtimeOptions,
+        ...resolvedOptions,
         tools: [],
         resourceLoaderOptions: {
-          ...runtimeOptions.resourceLoaderOptions,
+          ...resolvedOptions.resourceLoaderOptions,
           extensionFactories: [
-            ...(runtimeOptions.resourceLoaderOptions?.extensionFactories ?? []),
+            ...(resolvedOptions.resourceLoaderOptions?.extensionFactories ?? []),
             (pi) => {
               pi.on("input", async () => {
                 await holdAt("input");
@@ -207,4 +213,119 @@ await test("Stop pressed while Pi is still starting a run cancels that run", asy
   await fourth;
   await runtime.session.waitForIdle();
   assert.deepEqual(assistantReplies().at(-1), ["aborted", ""]);
+});
+
+await test("parent Stop before worker agent_start makes zero model requests", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-gui-stop-worker-before-start-"));
+  const agentDir = join(root, "agent");
+  const cwd = join(root, "workspace");
+  await mkdir(agentDir);
+  await mkdir(cwd);
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  });
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("A worker cancelled before start must not contact a provider");
+  });
+  t.after(() => assert.equal(fetch.mock.callCount(), 0));
+  await writeFile(join(agentDir, "auth.json"), "{}");
+  await writeFile(
+    join(agentDir, "models.json"),
+    JSON.stringify({
+      providers: {
+        "worker-stop-test": {
+          baseUrl: "http://127.0.0.1:9/never-contact",
+          apiKey: "LOCAL_TEST_CANARY",
+          api: "openai-completions",
+          models: [{ id: "scripted", input: ["text"], contextWindow: 128000, maxTokens: 4096 }],
+        },
+      },
+    }),
+  );
+
+  let releaseCreation!: () => void;
+  const creationReleased = new Promise<void>((resolve) => {
+    releaseCreation = resolve;
+  });
+  let creationEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    creationEntered = resolve;
+  });
+  let createCalls = 0;
+  let workerSession: AgentSession | undefined;
+  let disposeMock: { readonly mock: { callCount(): number } } | undefined;
+  const driver = new PiSdkDriver({
+    agentDir,
+    catalogFilePath: join(root, "catalogs.json"),
+    createAgentSessionRuntimeImpl: async (options) =>
+      createAgentSessionRuntimeWithNpmFallback({ ...options, tools: [] }),
+    inlineWorkerOptions: {
+      createAgentSessionImpl: async (options) => {
+        createCalls += 1;
+        creationEntered();
+        await creationReleased;
+        const result = await createAgentSession(options);
+        workerSession = result.session;
+        disposeMock = t.mock.method(result.session, "dispose");
+        return result;
+      },
+    },
+  });
+  const { ref } = await driver.createSession(
+    { workspaceId: "worker-stop", path: cwd },
+    { initialModel: { provider: "worker-stop-test", modelId: "scripted" } },
+  );
+  t.after(async () => {
+    await driver.closeSession(ref).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const supervisor = (
+    driver as unknown as {
+      supervisor: {
+        records: Map<
+          string,
+          {
+            runningRunId: string | undefined;
+            pendingSdkToolCallIds: Set<string>;
+            activeTerminalRun?: { allocation?: Promise<number | undefined> };
+            session: AgentSession;
+          }
+        >;
+        mapAgentEvent(record: unknown, event: unknown): unknown[];
+      };
+    }
+  ).supervisor;
+  const record = supervisor.records.get(sessionKey(ref));
+  assert(record);
+  supervisor.mapAgentEvent(record, { type: "agent_start" });
+  await record.activeTerminalRun?.allocation;
+  assert(record.runningRunId);
+  supervisor.mapAgentEvent(record, {
+    type: "tool_execution_start",
+    toolCallId: "before-start-tool",
+    toolName: "inline_task",
+    args: {},
+  });
+  const host = await driver.createInlineWorkerHostCapability(
+    ref,
+    record.runningRunId,
+    "before-start-tool",
+    new AbortController().signal,
+  );
+  const handle = driver.startInlineWorker({ prompt: "must-not-reach-model" }, host);
+  await entered;
+  const stopping = driver.cancelCurrentRun(ref);
+  releaseCreation();
+  await stopping;
+  const result = await handle.completion;
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(createCalls, 1);
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.deepEqual(workerSession?.messages, []);
+  assert.equal(disposeMock?.mock.callCount(), 1);
 });

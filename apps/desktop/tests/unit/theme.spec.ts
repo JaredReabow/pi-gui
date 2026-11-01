@@ -105,6 +105,42 @@ test("highlights code with the active preset's syntax theme", async () => {
   expect(colours.size).toBeGreaterThan(5);
 });
 
+test("syntax colours remain readable on every code surface", async () => {
+  await highlighterReady;
+  const samples = [
+    [
+      "typescript",
+      "const app = new ApplicationManager(); getAppProcessByAppId(appId[2]); // dispatch",
+    ],
+    ["json", '{"path":"work/vm/screenshot.png","content":[{"type":"text"}]}'],
+    ["bash", 'cd "/Users/example/Documents" && ./run.sh --flag=value'],
+    ["python", '{ "type": "text", "text": "Read image file" }'],
+  ] as const;
+
+  for (const preset of themePresets) {
+    for (const variant of variants) {
+      const { syntaxTheme } = preset.variants[variant];
+      const tokens = themeTokensFor(preset.id, variant);
+      const editorBackground = syntaxThemes[syntaxTheme].colors?.["editor.background"];
+      expect(typeof editorBackground, `${preset.id} ${variant}`).toBe("string");
+      const codeBackground = opaqueColorOver(tokens["--code-block-bg"]!, tokens["--main"]!);
+      let colouredTokens = 0;
+
+      for (const [language, sample] of samples) {
+        for (const token of highlightLine(sample, language, syntaxTheme) ?? []) {
+          if (!token.color) continue;
+          colouredTokens += 1;
+          const label = `${preset.id} ${variant} ${language} ${token.content}`;
+          expect(contrastRatio(token.color, editorBackground!), label).toBeGreaterThanOrEqual(4.5);
+          expect(contrastRatio(token.color, codeBackground), label).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+
+      expect(colouredTokens, `${preset.id} ${variant}`).toBeGreaterThan(0);
+    }
+  }
+});
+
 test("styles read only defined tokens and no preset-only fallback layer", () => {
   const css = readdirSync(stylesDir)
     .filter((file) => file.endsWith(".css"))
@@ -142,4 +178,22 @@ function expectClose(actual: string, expected: string): void {
   for (const index of [0, 1, 2]) {
     expect(Math.abs(a[index]! - b[index]!), `${actual} vs ${expected}`).toBeLessThanOrEqual(6);
   }
+}
+
+function opaqueColorOver(foreground: string, background: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(foreground)) return foreground;
+  const match = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(foreground);
+  if (!match) throw new Error(`Unsupported colour: ${foreground}`);
+  const [front, back] = [
+    [Number(match[1]), Number(match[2]), Number(match[3])],
+    [1, 3, 5].map((index) => Number.parseInt(background.slice(index, index + 2), 16)),
+  ] as const;
+  const opacity = Number(match[4]);
+  return `#${front
+    .map((channel, index) =>
+      Math.round(channel * opacity + back[index]! * (1 - opacity))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
 }

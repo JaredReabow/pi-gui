@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
+  confirmModelSwitch,
   createNamedThread,
   getDesktopState,
   launchDesktop,
@@ -39,6 +40,7 @@ test("changing model or thinking from the composer footer keeps the typed prompt
 
     await footer.getByRole("button", { name: "openai:gpt-5" }).click();
     await footer.getByRole("button", { name: "GPT-4o" }).click();
+    await confirmModelSwitch(window);
     await expect(footer.getByRole("button", { name: "openai:gpt-4o" })).toBeVisible();
     await expect(window.getByTestId("transcript")).toContainText("Model set to openai:gpt-4o");
     await expect(composer).toHaveValue(prompt);
@@ -60,6 +62,7 @@ test("changing model or thinking from the composer footer keeps the typed prompt
     await expect.poll(async () => (await getDesktopState(window)).composerDraft).toBe("/model");
     const optionsMenu = window.getByTestId("slash-options-menu");
     await optionsMenu.getByRole("button", { name: /GPT-5/ }).first().click();
+    await confirmModelSwitch(window);
     await expect(window.getByTestId("transcript")).toContainText("Model set to openai:gpt-5");
     // The cleared draft is saved before the model changes, not after the typing debounce.
     expect((await getDesktopState(window)).composerDraft).toBe("");

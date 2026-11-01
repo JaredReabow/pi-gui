@@ -456,6 +456,13 @@ await test(
       ],
     );
     assert.equal(h.failures().length, 0);
+    const terminal = (await h.driver.openSession(h.ref)).terminalRun;
+    assert.equal(terminal?.runId, extensionRunId);
+    assert.equal(
+      terminal?.generation,
+      2,
+      "extension-started run supersedes the original generation",
+    );
     const persisted = await assertPersistedAssistantIdentity(h);
     assert.deepEqual(
       persisted.map((event) => event.runId),
@@ -691,3 +698,66 @@ await test(
     );
   },
 );
+
+await test("completion before Stop stays complete and later runs supersede identified settlement", async (t) => {
+  const h = await fixture(t, (model) => response(model, "Completed"));
+  await h.driver.sendUserMessage(h.ref, { text: "First" });
+  await h.until(() => h.events.some((event) => event.type === "runCompleted"));
+  const first = (await h.driver.openSession(h.ref)).terminalRun;
+  assert.equal(first?.outcome, "completed");
+  await h.driver.cancelCurrentRun(h.ref);
+  assert.deepEqual((await h.driver.openSession(h.ref)).terminalRun, first);
+  await h.driver.sendUserMessage(h.ref, { text: "Second" });
+  await h.until(() => h.events.filter((event) => event.type === "runCompleted").length === 2);
+  const second = (await h.driver.openSession(h.ref)).terminalRun;
+  assert.equal(second?.generation, first!.generation + 1);
+  assert.notEqual(second?.runId, first?.runId);
+});
+
+await test("abort rejection leaves the actual completed outcome and no-op Stop cannot label it cancelled", async (t) => {
+  const held = gate();
+  const entered = gate();
+  const h = await fixture(
+    t,
+    (model) => response(model, "Completed"),
+    (pi) => {
+      pi.on("agent_before_settle", async () => {
+        entered.release();
+        await held.promise;
+      });
+    },
+  );
+  const sending = h.driver.sendUserMessage(h.ref, { text: "Complete after a rejected Stop" });
+  await entered.promise;
+  const abort = t.mock.method(h.runtime.session, "abort", async () => {
+    throw new Error("abort rejected");
+  });
+  await assert.rejects(h.driver.cancelCurrentRun(h.ref), /abort rejected/);
+  abort.mock.restore();
+  held.release();
+  await sending;
+  await h.until(() => h.events.some((event) => event.type === "runCompleted"));
+  assert.equal((await h.driver.openSession(h.ref)).terminalRun?.outcome, "completed");
+});
+
+await test("failed terminal storage is durable-unconfirmed and never fabricates a restart record", async (t) => {
+  const h = await fixture(
+    t,
+    (model) => response(model, "Completed"),
+    undefined,
+    (catalog) =>
+      Object.assign(Object.create(catalog) as JsonCatalogStore, {
+        sessions: {
+          ...catalog.sessions,
+          settleRun: async () => {
+            throw new Error("synthetic terminal disk failure");
+          },
+        },
+      }),
+  );
+  await h.driver.sendUserMessage(h.ref, { text: "Storage failure" });
+  await h.until(() => h.events.some((event) => event.type === "runCompleted"));
+  assert.equal((await h.driver.openSession(h.ref)).terminalRun, undefined);
+  const disk = new JsonCatalogStore({ catalogFilePath: join(h.root, "catalogs.json") });
+  assert.equal((await disk.sessions.getSession(h.ref))?.terminalRun, undefined);
+});

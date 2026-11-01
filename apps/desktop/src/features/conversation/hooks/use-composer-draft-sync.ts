@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import type { SessionRef } from "@pi-gui/session-driver/types";
 import type { ComposerDraftSyncSource, DesktopAppState } from "../../../../contracts/desktop-state";
-import type { PiDesktopApi } from "../../../../contracts/ipc";
+import type {
+  PendingComposerDraftCaptureHandler,
+  PendingComposerDraftFlushHandler,
+  PiDesktopApi,
+} from "../../../../contracts/ipc";
+import type { DraftFlushExpectation, DraftFlushOutcome } from "../../../../contracts/lifecycle";
 
 /** Persist/state/command restore saved or submitted text. They must not overwrite a newer local edit. */
 export function shouldAdoptComposerSnapshot(
@@ -12,6 +17,159 @@ export function shouldAdoptComposerSnapshot(
     return true;
   }
   return source !== "persist" && source !== "state" && source !== "command";
+}
+
+interface CapturedComposerDraft {
+  readonly draft: string;
+  readonly generation: number;
+  readonly sessionKey: string;
+}
+
+export interface ComposerDraftResultSnapshot extends CapturedComposerDraft {
+  readonly target: SessionRef | null;
+  readonly hydratedSessionKey: string;
+  readonly persistedDraft: string;
+  readonly hasPendingWrite: boolean;
+}
+
+export interface ComposerDraftResultRuntime {
+  snapshot(): ComposerDraftResultSnapshot;
+  pauseDebounce(): void;
+  waitForEarlierWrites(sessionKey: string): Promise<void>;
+  save(target: SessionRef, draft: string, generation: number, sessionKey: string): Promise<void>;
+  markSaved(generation: number, sessionKey: string): void;
+}
+
+/**
+ * Renderer-side capture/flush ownership. Capture records only bounded identity state; it
+ * performs no write. Flush validates the captured generation and session again before saving,
+ * serializes writes per session, and rejects stale or duplicate requests.
+ */
+export class ComposerDraftResultCoordinator {
+  private readonly captures = new Map<string, CapturedComposerDraft>();
+  private readonly queues = new Map<string, Promise<void>>();
+  private readonly active = new Set<string>();
+  private disposed = false;
+
+  capture(
+    request: Parameters<PendingComposerDraftCaptureHandler>[0],
+    snapshot: ComposerDraftResultSnapshot,
+    pauseDebounce: () => void,
+  ): DraftFlushExpectation {
+    if (this.disposed) throw new Error("The draft result owner is no longer mounted.");
+    pauseDebounce();
+    const expectation = {
+      operationId: request.operationId,
+      requestKey: request.requestKey,
+      windowId: request.windowId,
+      editGeneration: snapshot.generation,
+    } satisfies DraftFlushExpectation;
+    const key = this.key(expectation);
+    if (this.captures.has(key) || this.active.has(key)) {
+      throw new Error("The draft capture identity is already owned.");
+    }
+    this.captures.set(key, {
+      draft: snapshot.draft,
+      generation: snapshot.generation,
+      sessionKey: snapshot.sessionKey,
+    });
+    return expectation;
+  }
+
+  async flush(
+    request: Parameters<PendingComposerDraftFlushHandler>[0],
+    runtime: ComposerDraftResultRuntime,
+  ): Promise<DraftFlushOutcome> {
+    const key = this.key(request.expectation);
+    const captured = this.captures.get(key);
+    if (!captured || this.disposed || this.active.has(key)) {
+      return { ...request.expectation, status: "rejected" };
+    }
+    this.active.add(key);
+    const queueKey = captured.sessionKey || "no-session";
+    const previous = this.queues.get(queueKey) ?? Promise.resolve();
+    let operation!: Promise<void>;
+    let saved = false;
+    const completion = previous.then(async () => {
+      if (this.disposed) return;
+      const before = runtime.snapshot();
+      if (!this.matchesCapture(captured, request.expectation.editGeneration, before)) return;
+      if (!before.target) return;
+      if (!before.hasPendingWrite && before.draft === before.persistedDraft) {
+        runtime.markSaved(before.generation, captured.sessionKey);
+        return;
+      }
+      await runtime.waitForEarlierWrites(captured.sessionKey);
+      if (this.disposed) return;
+      const ready = runtime.snapshot();
+      if (
+        !this.matchesCapture(captured, request.expectation.editGeneration, ready) ||
+        !ready.target
+      )
+        return;
+      await runtime.save(ready.target, captured.draft, captured.generation, captured.sessionKey);
+      saved = true;
+    });
+    operation = completion.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.queues.set(queueKey, operation);
+    try {
+      await completion;
+      const final = runtime.snapshot();
+      if (
+        this.disposed ||
+        !this.matchesCapture(captured, request.expectation.editGeneration, final)
+      ) {
+        return { ...request.expectation, status: "rejected" };
+      }
+      if (
+        !saved &&
+        (!final.target || (!final.hasPendingWrite && final.draft === final.persistedDraft))
+      ) {
+        return { ...request.expectation, status: "no-pending" };
+      }
+      runtime.markSaved(captured.generation, captured.sessionKey);
+      return { ...request.expectation, status: "saved" };
+    } catch {
+      return { ...request.expectation, status: "rejected" };
+    } finally {
+      this.captures.delete(key);
+      this.active.delete(key);
+      if (this.queues.get(queueKey) === operation) this.queues.delete(queueKey);
+    }
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.captures.clear();
+    this.queues.clear();
+    this.active.clear();
+  }
+
+  private key(expectation: DraftFlushExpectation): string {
+    return JSON.stringify([
+      expectation.operationId,
+      expectation.requestKey,
+      expectation.windowId,
+      expectation.editGeneration,
+    ]);
+  }
+
+  private matchesCapture(
+    captured: CapturedComposerDraft,
+    generation: number,
+    snapshot: ComposerDraftResultSnapshot,
+  ): boolean {
+    return (
+      snapshot.generation === generation &&
+      snapshot.generation === captured.generation &&
+      snapshot.draft === captured.draft &&
+      snapshot.sessionKey === captured.sessionKey &&
+      snapshot.hydratedSessionKey === captured.sessionKey
+    );
+  }
 }
 
 interface UseComposerDraftSyncParams {
@@ -50,6 +208,7 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
   const pendingComposerDraftRef = useRef<PendingComposerDraftWrite | null>(null);
   const composerDraftWriteTimerRef = useRef<number | null>(null);
   const flushComposerDraftRef = useRef<() => void>(() => {});
+  const draftResultCoordinatorRef = useRef<ComposerDraftResultCoordinator | null>(null);
   const currentSessionKeyRef = useRef(selectedSessionKey);
   currentSessionKeyRef.current = selectedSessionKey;
   const selectedSessionRef = useRef(selectedSession);
@@ -58,6 +217,8 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
 
   composerDraftRef.current = composerDraft;
   const persistedComposerDraft = snapshot?.composerDraft ?? "";
+  const persistedComposerDraftRef = useRef(persistedComposerDraft);
+  persistedComposerDraftRef.current = persistedComposerDraft;
   const setComposerDraft = useCallback((nextDraft: SetStateAction<string>) => {
     const currentDraft = composerDraftRef.current;
     const resolvedDraft = typeof nextDraft === "function" ? nextDraft(currentDraft) : nextDraft;
@@ -108,7 +269,7 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
 
   const persistComposerDraft = (write: PendingComposerDraftWrite) => {
     if (!api) {
-      return;
+      return Promise.reject(new Error("The desktop connection is unavailable."));
     }
     const completion = api.updateComposerDraft(write.draft, write.target).then(
       (state) => {
@@ -125,11 +286,13 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
           acknowledgedLocalEditGenerationRef.current = write.generation;
         }
       },
-      () => {
+      (error: unknown) => {
         inFlightComposerDraftWritesRef.current.delete(write);
+        throw error;
       },
     );
     inFlightComposerDraftWritesRef.current.set(write, completion);
+    return completion;
   };
 
   useEffect(() => {
@@ -171,7 +334,7 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
       if (pendingComposerDraftRef.current === pendingWrite) {
         pendingComposerDraftRef.current = null;
       }
-      persistComposerDraft(pendingWrite);
+      void persistComposerDraft(pendingWrite).catch(() => {});
     }, 350);
     composerDraftWriteTimerRef.current = timeout;
 
@@ -193,7 +356,7 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
     const pending = pendingComposerDraftRef.current;
     pendingComposerDraftRef.current = null;
     if (pending !== null) {
-      persistComposerDraft(pending);
+      void persistComposerDraft(pending).catch(() => {});
     }
   };
   flushComposerDraftRef.current = flushComposerDraft;
@@ -283,6 +446,72 @@ export function useComposerDraftSync(params: UseComposerDraftSyncParams) {
   );
 
   flushComposerDraftAsyncRef.current = flushComposerDraftAsync;
+
+  useEffect(() => {
+    if (!api) return undefined;
+    const coordinator = new ComposerDraftResultCoordinator();
+    draftResultCoordinatorRef.current = coordinator;
+    const snapshotForResult = (): ComposerDraftResultSnapshot => ({
+      draft: composerDraftRef.current,
+      generation: localEditGenerationRef.current,
+      sessionKey: currentSessionKeyRef.current,
+      target: selectedSessionRef.current,
+      hydratedSessionKey: hydratedComposerSessionKeyRef.current,
+      persistedDraft: persistedComposerDraftRef.current,
+      hasPendingWrite:
+        pendingComposerDraftRef.current !== null ||
+        [...inFlightComposerDraftWritesRef.current.keys()].some(
+          (write) => write.sessionKey === currentSessionKeyRef.current,
+        ),
+    });
+    const runtime: ComposerDraftResultRuntime = {
+      snapshot: snapshotForResult,
+      pauseDebounce: () => {
+        if (composerDraftWriteTimerRef.current !== null) {
+          window.clearTimeout(composerDraftWriteTimerRef.current);
+          composerDraftWriteTimerRef.current = null;
+        }
+      },
+      waitForEarlierWrites: async (sessionKey) => {
+        await Promise.allSettled(
+          [...inFlightComposerDraftWritesRef.current.entries()]
+            .filter(([write]) => write.sessionKey === sessionKey)
+            .map(([, completion]) => completion),
+        );
+      },
+      save: async (target, draft, generation, sessionKey) => {
+        await persistComposerDraft({
+          draft,
+          generation,
+          sessionKey,
+          target,
+        });
+      },
+      markSaved: (generation, sessionKey) => {
+        if (
+          generation === localEditGenerationRef.current &&
+          sessionKey === currentSessionKeyRef.current
+        ) {
+          acknowledgedLocalEditGenerationRef.current = generation;
+          pendingComposerDraftRef.current = null;
+        }
+      },
+    };
+    const unsubscribeCapture = api.onPendingComposerDraftCapture((request) =>
+      Promise.resolve(coordinator.capture(request, snapshotForResult(), runtime.pauseDebounce)),
+    );
+    const unsubscribeFlush = api.onPendingComposerDraftFlushResult((request) =>
+      coordinator.flush(request, runtime),
+    );
+    return () => {
+      unsubscribeCapture();
+      unsubscribeFlush();
+      coordinator.dispose();
+      if (draftResultCoordinatorRef.current === coordinator) {
+        draftResultCoordinatorRef.current = null;
+      }
+    };
+  }, [api]);
 
   return {
     composerDraft,

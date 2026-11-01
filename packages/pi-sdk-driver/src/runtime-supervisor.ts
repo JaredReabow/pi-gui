@@ -54,10 +54,12 @@ import {
   listMcpServers,
   removeMcpServer,
   setMcpServerEnabled,
+  updateMcpServer,
   type McpConfigLocation,
   type McpServerListing,
   type McpServerScope,
   type NewMcpServer,
+  type McpServerUpdate,
 } from "./mcp-config.js";
 import {
   isBuiltinExtensionPath,
@@ -361,18 +363,29 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     workspace: WorkspaceRef,
     server: NewMcpServer,
     otherWorkspaces: readonly WorkspaceRef[] = [],
-  ): void {
-    addMcpServer(
+  ): Promise<void> {
+    return addMcpServer(
       this.mcpConfigLocation(workspace),
       server,
       otherWorkspaces.map((other) => other.path),
     );
   }
 
-  removeMcpServer(name: string): void {
-    if (!removeMcpServer(this.agentDir, name)) {
-      throw new Error(`The global mcp.json does not define MCP server "${name}"`);
-    }
+  removeMcpServer(name: string): Promise<void> {
+    return removeMcpServer(this.agentDir, name).then((removed) => {
+      if (!removed) {
+        throw new Error(`The global mcp.json does not define MCP server "${name}"`);
+      }
+    });
+  }
+
+  updateMcpServer(
+    workspace: WorkspaceRef,
+    scope: McpServerScope,
+    name: string,
+    patch: McpServerUpdate,
+  ): Promise<void> {
+    return updateMcpServer(this.mcpConfigLocation(workspace), scope, name, patch);
   }
 
   setMcpServerEnabled(
@@ -380,8 +393,8 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     scope: McpServerScope,
     name: string,
     enabled: boolean,
-  ): void {
-    setMcpServerEnabled(this.mcpConfigLocation(workspace), scope, name, enabled);
+  ): Promise<void> {
+    return setMcpServerEnabled(this.mcpConfigLocation(workspace), scope, name, enabled);
   }
 
   private mcpConfigLocation(workspace: WorkspaceRef): McpConfigLocation {

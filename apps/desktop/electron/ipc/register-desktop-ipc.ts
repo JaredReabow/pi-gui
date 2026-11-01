@@ -1,3 +1,8 @@
+import {
+  sidebarPreferences_decodeFolder,
+  sidebarPreferences_decodeSort,
+  sidebarPreferences_decodeMarkRead,
+} from "../../contracts/sidebar-preferences";
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import type { SessionRef } from "@pi-gui/session-driver";
@@ -12,9 +17,16 @@ import {
 } from "../../contracts/composer-attachments";
 import {
   desktopIpc,
+  supportDevelopment_decodeDismissal,
+  supportDevelopment_decodeEmpty,
+  telemetryConsentIpc_decodeEmpty,
+  telemetryConsentIpc_decodeStatus,
+  telemetryConsentIpc_decodeUpdate,
   type ChangedFilesResult,
   type CustomProviderProbeInput,
   type CustomProviderProbeResult,
+  type TelemetryConsentIpcStatus,
+  type TelemetryConsentIpcUpdate,
 } from "../../contracts/ipc";
 import type { DesktopAppStore } from "../application/app-store";
 import type { NotificationPermissionService } from "../platform/notification-permission";
@@ -23,6 +35,10 @@ import type { TerminalService } from "../platform/terminal-service";
 import type { ThemeManager } from "../platform/theme-manager";
 import type { WindowOwner } from "../windows/window-owner";
 import type { PendingComposerDraftFlusher } from "../windows/pending-draft-flush";
+import {
+  supportService_decodeOptionId,
+  type SupportService,
+} from "../distribution/support-service";
 import { WorkbenchRequests, type WorkbenchOwner } from "./workbench-requests";
 import type { DesktopExtensionViewOwner } from "../extensions/extension-view-owner";
 import { registerExtensionViewRequests } from "./extension-view-requests";
@@ -75,6 +91,9 @@ type StateOwner = Pick<
   | "getSelectedTranscriptForView"
   | "setActiveView"
   | "setSidebarCollapsed"
+  | "setFolderPreference"
+  | "setAllThreadsSort"
+  | "getEffectiveChildModelSettings"
   | "setThreadGrouping"
   | "setWorkspaceCollapsed"
   | "setThemeMode"
@@ -103,6 +122,7 @@ type ConversationOwner = Pick<
   | "archiveSession"
   | "unarchiveSession"
   | "markSessionRead"
+  | "markAllThreadsRead"
   | "setSessionPinned"
   | "createSession"
   | "startThread"
@@ -178,7 +198,10 @@ export interface DesktopIpcOwners {
   readonly orchestration: OrchestrationOwner;
   readonly scheduledTasks: ScheduledTaskOwner;
   readonly settings: SettingsOwner;
-  readonly composerDraftFlush: Pick<PendingComposerDraftFlusher, "acknowledge" | "flush">;
+  readonly composerDraftFlush: Pick<
+    PendingComposerDraftFlusher,
+    "acknowledge" | "acknowledgeCaptureResult" | "acknowledgeFlushResult" | "flush"
+  >;
 }
 
 export interface DesktopIpcCapabilities {
@@ -186,6 +209,11 @@ export interface DesktopIpcCapabilities {
   readonly theme: ThemeManager;
   readonly editors: EditorService;
   readonly openExternal: (url: string) => Promise<void>;
+  readonly supportDevelopment: Pick<SupportService, "getState" | "openOption" | "dismiss">;
+  readonly telemetryConsent?: {
+    readonly getStatus: () => TelemetryConsentIpcStatus;
+    readonly change: (request: TelemetryConsentIpcUpdate) => Promise<TelemetryConsentIpcStatus>;
+  };
   readonly pickWorkspace: (window: BrowserWindow) => Promise<DesktopAppState>;
   readonly createLoginCallbacks: (
     window: BrowserWindow,
@@ -277,6 +305,34 @@ export function registerDesktopIpc({
   };
   const reportLimit = (event: IpcMainInvokeEvent, error: ComposerAttachmentLimitError) =>
     run(event, () => owners.conversation.withError(error));
+  handleMainFrame(
+    desktopIpc.markAllThreadsRead,
+    sidebarPreferences_decodeMarkRead,
+    (input, { event }) => immediate(event, () => owners.conversation.markAllThreadsRead(input)),
+  );
+  handleMainFrame(desktopIpc.setAllThreadsSort, sidebarPreferences_decodeSort, (sort, { event }) =>
+    immediate(event, () => owners.state.setAllThreadsSort(sort)),
+  );
+  handleMainFrame(
+    desktopIpc.setFolderPreference,
+    (raw) => {
+      const input = expectRecord(raw, "folder preference");
+      if (Object.keys(input).some((key) => key !== "workspaceId" && key !== "preference"))
+        throw new Error("Invalid folder preference request");
+      return {
+        workspaceId: expectNonEmptyString(input.workspaceId, "workspaceId"),
+        preference: sidebarPreferences_decodeFolder(input.preference),
+      };
+    },
+    (input, { event }) =>
+      immediate(event, () => owners.state.setFolderPreference(input.workspaceId, input.preference)),
+  );
+  handleMainFrame(
+    desktopIpc.getEffectiveChildModelSettings,
+    (raw) => expectNonEmptyString(raw, "workspaceId"),
+    (workspaceId) => owners.state.getEffectiveChildModelSettings(workspaceId),
+  );
+
   const runCatchingLimits = async (
     event: IpcMainInvokeEvent,
     action: () => Promise<DesktopAppState>,
@@ -313,6 +369,32 @@ export function registerDesktopIpc({
     const presetId = expectThemePresetId(rawPresetId);
     return run(event, () => owners.state.setThemePresetId(presetId));
   });
+  handleMainFrame(desktopIpc.getSupportDevelopment, supportDevelopment_decodeEmpty, () =>
+    capabilities.supportDevelopment.getState(),
+  );
+  handleMainFrame(desktopIpc.openSupportDevelopment, supportService_decodeOptionId, (optionId) =>
+    capabilities.supportDevelopment.openOption(optionId),
+  );
+  handleMainFrame(
+    desktopIpc.dismissSupportDevelopment,
+    supportDevelopment_decodeDismissal,
+    (choice) => capabilities.supportDevelopment.dismiss(choice),
+  );
+  const requireTelemetryConsent = () => {
+    if (!capabilities.telemetryConsent) {
+      throw new Error("Telemetry consent is unavailable.");
+    }
+    return capabilities.telemetryConsent;
+  };
+  handleMainFrame(desktopIpc.getTelemetryConsentStatus, telemetryConsentIpc_decodeEmpty, () =>
+    telemetryConsentIpc_decodeStatus(requireTelemetryConsent().getStatus()),
+  );
+  handleMainFrame(
+    desktopIpc.setTelemetryConsent,
+    telemetryConsentIpc_decodeUpdate,
+    async (request) =>
+      telemetryConsentIpc_decodeStatus(await requireTelemetryConsent().change(request)),
+  );
   ipcMain.handle(desktopIpc.openExternal, (event, rawUrl: unknown) => {
     windows.windowForSender(event.sender);
     return capabilities.openExternal(expectString(rawUrl, "url"));
@@ -880,6 +962,16 @@ export function registerDesktopIpc({
       return raw;
     },
     (requestId, { contents }) => owners.composerDraftFlush.acknowledge(contents, requestId),
+  );
+  handleMainFrame(
+    desktopIpc.pendingComposerDraftCaptured,
+    (raw) => raw,
+    (raw, { contents }) => owners.composerDraftFlush.acknowledgeCaptureResult(contents, raw),
+  );
+  handleMainFrame(
+    desktopIpc.pendingComposerDraftFlushedResult,
+    (raw) => raw,
+    (raw, { contents }) => owners.composerDraftFlush.acknowledgeFlushResult(contents, raw),
   );
   ipcMain.handle(desktopIpc.updateComposerDraft, (event, rawDraft: unknown, rawTarget: unknown) => {
     // A debounced write can arrive after the window selected another task, so it names its own.

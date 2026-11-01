@@ -28,8 +28,31 @@ export type {
   PiDesktopExtensionRuntime,
 } from "./desktop-extension-bridge.js";
 export type {
+  McpConfigCommitResult,
+  McpConfigDependencyRevision,
+  McpConfigErrorCode,
+  McpConfigLocation,
+  McpConfigMutation,
+  McpConfigMutationOptions,
+  McpConfigMutationPreview,
+  McpSecretPresence,
   McpServerListing,
   McpServerScope,
   McpServerSummary,
+  McpServerUpdate,
   NewMcpServer,
+} from "./mcp-config.js";
+export {
+  addMcpServer,
+  applyMcpConfigMutation,
+  commitMcpConfigMutation,
+  isValidMcpServerName,
+  listMcpServers,
+  mcpConfigPath,
+  McpConfigConflictError,
+  McpConfigError,
+  previewMcpConfigMutation,
+  removeMcpServer,
+  setMcpServerEnabled,
+  updateMcpServer,
 } from "./mcp-config.js";

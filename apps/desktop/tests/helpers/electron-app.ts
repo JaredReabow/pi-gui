@@ -1,7 +1,8 @@
+import { realpathSync } from "node:fs";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { expect, type Page } from "@playwright/test";
@@ -63,14 +64,48 @@ function isProviderAuthEnvVar(key: string): boolean {
     key.endsWith("_API_KEY") || (NON_API_KEY_PROVIDER_ENV_VARS as readonly string[]).includes(key)
   );
 }
+
+function isTelemetryEnvVar(key: string): boolean {
+  return /^(?:OTEL_|POSTHOG_|SENTRY_|TELEMETRY_)/i.test(key);
+}
 export type PiAppWindow = Window & { piApp?: PiDesktopApi };
 export type DesktopTestMode = "foreground" | "background";
+
+export interface DesktopLaunchIdentity {
+  readonly pid: number;
+  readonly appPath: string;
+  readonly userData: string;
+  readonly visible: boolean;
+  readonly focused: boolean;
+  readonly documentFocused: boolean;
+  readonly testMode: DesktopTestMode | null;
+  readonly testHooks: boolean;
+  readonly telemetry: {
+    readonly doNotTrack: string | null;
+    readonly otelSdkDisabled: string | null;
+    readonly testTransport: string | null;
+  };
+  readonly windows: readonly {
+    readonly id: number;
+    readonly visible: boolean;
+    readonly focused: boolean;
+    readonly destroyed: boolean;
+  }[];
+}
+
+export interface DesktopCleanupResult {
+  readonly pid?: number;
+  readonly closed: true;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+}
 
 export interface DesktopHarness {
   electronApp: ElectronApplication;
   firstWindow(): Promise<Page>;
   focusWindow(): Promise<void>;
-  close(): Promise<void>;
+  inspectIdentity(): Promise<DesktopLaunchIdentity>;
+  close(): Promise<DesktopCleanupResult>;
 }
 
 export interface LaunchDesktopOptions {
@@ -169,7 +204,20 @@ export async function launchDesktop(
     ...recordVideo,
   });
 
-  return createDesktopHarness(electronApp);
+  return createDesktopHarness(
+    electronApp,
+    normalized,
+    userDataDir,
+    requestedTestMode(env),
+    desktopDir,
+  );
+}
+
+export async function confirmModelSwitch(window: Page): Promise<void> {
+  const confirmation = window.getByTestId("model-switch-confirmation");
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Switch model" }).click();
+  await expect(confirmation).toHaveCount(0);
 }
 
 export async function spawnDesktopProcess(
@@ -195,7 +243,7 @@ export async function launchPackagedDesktop(
   const env = buildDesktopLaunchEnv(userDataDir, agentDir, normalized);
   const releaseDir = resolvePackagedReleaseDir(process.env.PI_APP_TEST_RELEASE_DIR);
   const executablePath = await resolvePackagedAppExecutable(releaseDir);
-  return launchDesktopExecutable(executablePath, env);
+  return launchDesktopExecutable(executablePath, env, normalized, userDataDir);
 }
 
 export async function launchDesktopByExecutable(
@@ -206,12 +254,14 @@ export async function launchDesktopByExecutable(
   const normalized = normalizeLaunchOptions(options);
   const agentDir = await prepareAgentDir(userDataDir, normalized);
   const env = buildDesktopLaunchEnv(userDataDir, agentDir, normalized);
-  return launchDesktopExecutable(executablePath, env);
+  return launchDesktopExecutable(executablePath, env, normalized, userDataDir);
 }
 
 async function launchDesktopExecutable(
   executablePath: string,
-  env: NodeJS.ProcessEnv,
+  env: Record<string, string>,
+  options: LaunchDesktopOptions,
+  userDataDir: string,
 ): Promise<DesktopHarness> {
   const electronApp = await electron.launch({
     executablePath,
@@ -220,7 +270,7 @@ async function launchDesktopExecutable(
     env,
   });
 
-  return createDesktopHarness(electronApp);
+  return createDesktopHarness(electronApp, options, userDataDir, requestedTestMode(env));
 }
 
 function isPlaceholderElectronPage(page: Page): boolean {
@@ -254,13 +304,114 @@ async function waitForDesktopRendererPage(
   );
 }
 
-function createDesktopHarness(electronApp: ElectronApplication): DesktopHarness {
+function createDesktopHarness(
+  electronApp: ElectronApplication,
+  options: LaunchDesktopOptions,
+  userDataDir: string,
+  requestedMode: DesktopTestMode | undefined,
+  expectedAppPath?: string,
+): DesktopHarness {
   let page: Page | undefined;
+  let identityPromise: Promise<DesktopLaunchIdentity> | undefined;
+  let closePromise: Promise<DesktopCleanupResult> | undefined;
   const outputTail: string[] = [];
   electronApp.process().stderr?.on("data", (chunk: Buffer) => {
     outputTail.push(...chunk.toString("utf8").split("\n").filter(Boolean));
     outputTail.splice(0, Math.max(0, outputTail.length - APP_OUTPUT_TAIL_LINES));
   });
+
+  async function readIdentity(appPage: Page): Promise<DesktopLaunchIdentity> {
+    if (identityPromise) return identityPromise;
+    identityPromise = electronApp
+      .evaluate(({ app, BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows();
+        const first = windows[0];
+        return {
+          pid: process.pid,
+          appPath: app.getAppPath(),
+          userData: app.getPath("userData"),
+          visible: first?.isVisible() ?? false,
+          focused: first?.isFocused() ?? false,
+          testMode:
+            process.env.PI_APP_TEST_MODE === "foreground" ||
+            process.env.PI_APP_TEST_MODE === "background"
+              ? process.env.PI_APP_TEST_MODE
+              : null,
+          testHooks: "__PI_APP_TEST_HOOKS" in globalThis,
+          telemetry: {
+            doNotTrack: process.env.DO_NOT_TRACK ?? null,
+            otelSdkDisabled: process.env.OTEL_SDK_DISABLED ?? null,
+            testTransport: process.env.PI_APP_TEST_TELEMETRY ?? null,
+          },
+          windows: windows.map((window) => ({
+            id: window.id,
+            visible: window.isVisible(),
+            focused: window.isFocused(),
+            destroyed: window.isDestroyed(),
+          })),
+        };
+      })
+      .then(async (identity) => {
+        const documentFocused = await appPage.evaluate(() => document.hasFocus());
+        const ownedPid = electronApp.process().pid;
+        if (!ownedPid || identity.pid !== ownedPid) {
+          throw new Error(
+            `Electron launch PID mismatch: main reported ${identity.pid}, owned child is ${ownedPid ?? "<none>"}.`,
+          );
+        }
+        if ((await realpath(identity.userData)) !== (await realpath(userDataDir))) {
+          throw new Error(
+            `Electron launch profile mismatch: app uses ${identity.userData}, expected ${userDataDir}.`,
+          );
+        }
+        if (expectedAppPath && resolve(identity.appPath) !== resolve(expectedAppPath)) {
+          throw new Error(
+            `Electron launch app path mismatch: app uses ${identity.appPath}, expected ${expectedAppPath}.`,
+          );
+        }
+        const testMode: DesktopTestMode | null =
+          identity.testMode === "foreground" || identity.testMode === "background"
+            ? identity.testMode
+            : null;
+        const resolvedIdentity: DesktopLaunchIdentity = {
+          ...identity,
+          documentFocused,
+          testMode,
+        };
+        if (requestedMode === "background") {
+          if (testMode !== "background") {
+            throw new Error(`Background launch reported test mode ${testMode ?? "<none>"}.`);
+          }
+          // DOM focus is recorded for diagnostics, but a hidden BrowserWindow can
+          // retain logical document focus. Native window state determines whether
+          // the test foreground was disturbed.
+          if (identity.visible || identity.focused) {
+            throw new Error(
+              `Background launch became interactive in the foreground: visible=${identity.visible}, focused=${identity.focused}.`,
+            );
+          }
+          const invalidWindow = identity.windows.find(
+            (window) => window.visible || window.focused || window.destroyed,
+          );
+          if (identity.windows.length === 0 || invalidWindow) {
+            throw new Error(
+              `Background launch has no valid owned window: ${JSON.stringify(identity.windows)}.`,
+            );
+          }
+          if (
+            identity.telemetry.doNotTrack !== "1" ||
+            identity.telemetry.otelSdkDisabled !== "true" ||
+            identity.telemetry.testTransport !== "disabled"
+          ) {
+            throw new Error(
+              `Background launch did not receive the isolated telemetry policy: ${JSON.stringify(identity.telemetry)}.`,
+            );
+          }
+        }
+        return resolvedIdentity;
+      });
+    return identityPromise;
+  }
 
   async function getWindow(): Promise<Page> {
     if (!page) {
@@ -272,13 +423,101 @@ function createDesktopHarness(electronApp: ElectronApplication): DesktopHarness 
       await page.waitForFunction(() => Boolean(globalThis.window.piApp), undefined, {
         timeout: 15_000,
       });
+      // Every background consumer gets the isolation check once the renderer is ready.
+      if (requestedMode === "background") {
+        await readIdentity(page);
+      }
     }
     return page;
+  }
+
+  async function close(): Promise<DesktopCleanupResult> {
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      // Playwright clears its internal Electron handles when close() settles.
+      // Capture the child once so exit verification and forced cleanup keep
+      // referring to the process this harness owns.
+      const appProcess = electronApp.process();
+      if (!appProcess?.pid) {
+        throw new Error("The Electron harness has no owned child process to close.");
+      }
+      // Playwright waits with no bound until the app and every process holding its output
+      // pipes are gone, and the worker's teardown then hangs on the same wait. Log quit's
+      // progress to the output and fail fast instead.
+      let timer: NodeJS.Timeout | undefined;
+      const timedOut = new Promise<false>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(false), APP_EXIT_TIMEOUT_MS);
+      });
+      let closeError: unknown;
+      const closed = electronApp
+        .evaluate(({ app, BrowserWindow }) => {
+          const log = (stage: string) => process.stderr.write(`[test quit] ${stage}\n`);
+          app.prependListener("before-quit", () => log("before-quit"));
+          app.once("will-quit", () => log("will-quit"));
+          for (const window of BrowserWindow.getAllWindows()) {
+            window.on("close", (event) =>
+              log(`window ${window.id} close${event.defaultPrevented ? " held" : ""}`),
+            );
+          }
+        })
+        .catch(() => undefined)
+        .then(() => electronApp.close())
+        .then(() => true)
+        .catch((error: unknown) => {
+          closeError = error;
+          return false;
+        });
+      const exited = await Promise.race([closed, timedOut]).finally(() => clearTimeout(timer));
+      if (exited && (await waitForOwnedProcessExit(appProcess, 5_000))) {
+        return {
+          pid: appProcess.pid,
+          closed: true,
+          exitCode: appProcess.exitCode,
+          signalCode: appProcess.signalCode,
+        };
+      }
+
+      const exitState =
+        appProcess.exitCode === null && appProcess.signalCode === null
+          ? "is still running"
+          : `exited (${appProcess.exitCode ?? appProcess.signalCode})`;
+      const leftovers = await processGroupListing(appProcess.pid);
+      // Playwright launches the app as a process group leader, so this also ends the
+      // processes it started that still hold its output pipes.
+      if (appProcess.pid && process.platform !== "win32") {
+        try {
+          process.kill(-appProcess.pid, "SIGKILL");
+        } catch {
+          // The group is already gone.
+        }
+      } else if (
+        process.platform === "win32" &&
+        appProcess.pid &&
+        appProcess.exitCode === null &&
+        appProcess.signalCode === null
+      ) {
+        await execFileAsync("taskkill", ["/PID", String(appProcess.pid), "/T", "/F"], {
+          timeout: 5_000,
+        }).catch(() => undefined);
+      }
+      const forcedExitConfirmed = await waitForOwnedProcessExit(appProcess, 5_000);
+      throw new Error(
+        [
+          `The app did not finish closing within ${APP_EXIT_TIMEOUT_MS / 1000} s of quitting (or its owned child did not exit after close), so it was killed. The app ${exitState}.`,
+          `Owned child exit after forced cleanup: ${forcedExitConfirmed ? "verified" : "not verified"}.`,
+          ...(closeError ? [`Close error: ${String(closeError)}`] : []),
+          `Processes left in its group:\n${leftovers}`,
+          `Last app output:\n${outputTail.join("\n")}`,
+        ].join("\n"),
+      );
+    })();
+    return closePromise;
   }
 
   return {
     electronApp,
     firstWindow: () => getWindow(),
+    inspectIdentity: async () => readIdentity(await getWindow()),
     focusWindow: async () => {
       const appPage = await getWindow();
       await electronApp.evaluate(({ BrowserWindow, app }) => {
@@ -313,57 +552,32 @@ function createDesktopHarness(electronApp: ElectronApplication): DesktopHarness 
         )
         .toBe(true);
     },
-    close: async () => {
-      // Playwright waits with no bound until the app and every process holding its output
-      // pipes are gone, and the worker's teardown then hangs on the same wait. Log quit's
-      // progress to the output and fail fast instead.
-      let timer: NodeJS.Timeout | undefined;
-      const timedOut = new Promise<false>((resolveTimeout) => {
-        timer = setTimeout(() => resolveTimeout(false), APP_EXIT_TIMEOUT_MS);
-      });
-      const closed = electronApp
-        .evaluate(({ app, BrowserWindow }) => {
-          const log = (stage: string) => process.stderr.write(`[test quit] ${stage}\n`);
-          app.prependListener("before-quit", () => log("before-quit"));
-          app.once("will-quit", () => log("will-quit"));
-          for (const window of BrowserWindow.getAllWindows()) {
-            window.on("close", (event) =>
-              log(`window ${window.id} close${event.defaultPrevented ? " held" : ""}`),
-            );
-          }
-        })
-        .catch(() => undefined)
-        .then(() => electronApp.close())
-        .then(() => true);
-      const exited = await Promise.race([closed, timedOut]).finally(() => clearTimeout(timer));
-      if (exited) return;
-      closed.catch(() => undefined);
-      const appProcess = electronApp.process();
-      const exitState =
-        appProcess.exitCode === null && appProcess.signalCode === null
-          ? "is still running"
-          : `exited (${appProcess.exitCode ?? appProcess.signalCode})`;
-      const leftovers = await processGroupListing(appProcess.pid);
-      // Playwright launches the app as a process group leader, so this also ends the
-      // processes it started that still hold its output pipes.
-      if (appProcess.pid && process.platform !== "win32") {
-        try {
-          process.kill(-appProcess.pid, "SIGKILL");
-        } catch {
-          // The group is already gone.
-        }
-      } else {
-        appProcess.kill("SIGKILL");
-      }
-      throw new Error(
-        [
-          `The app did not finish closing within ${APP_EXIT_TIMEOUT_MS / 1000} s of quitting, so it was killed. The app ${exitState}.`,
-          `Processes left in its group:\n${leftovers}`,
-          `Last app output:\n${outputTail.join("\n")}`,
-        ].join("\n"),
-      );
-    },
+    close,
   };
+}
+
+function requestedTestMode(env: Readonly<Record<string, string>>): DesktopTestMode | undefined {
+  return env.PI_APP_TEST_MODE === "background" || env.PI_APP_TEST_MODE === "foreground"
+    ? env.PI_APP_TEST_MODE
+    : undefined;
+}
+
+async function waitForOwnedProcessExit(
+  appProcess: ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (appProcess.exitCode !== null || appProcess.signalCode !== null) return true;
+  return new Promise<boolean>((resolveExit) => {
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (exited: boolean) => {
+      if (timer) clearTimeout(timer);
+      appProcess.off("exit", onExit);
+      resolveExit(exited);
+    };
+    const onExit = () => finish(true);
+    appProcess.once("exit", onExit);
+    timer = setTimeout(() => finish(false), timeoutMs);
+  });
 }
 
 async function processGroupListing(groupId: number | undefined): Promise<string> {
@@ -416,15 +630,22 @@ function buildDesktopLaunchEnv(
   userDataDir: string,
   agentDir: string,
   options: LaunchDesktopOptions,
-): NodeJS.ProcessEnv {
-  const baseEnv = options.inheritParentEnv === false ? {} : { ...process.env };
+): Record<string, string> {
+  const baseEnv: Record<string, string> = {};
+  if (options.inheritParentEnv !== false) {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) baseEnv[key] = value;
+    }
+  }
   // Ambient provider credentials must never turn a fixture test into a real request.
   // Explicit envOverrides remain available for tests of environment configuration.
   for (const key of Object.keys(baseEnv)) {
     if (isProviderAuthEnvVar(key)) delete baseEnv[key];
   }
-  const env = {
+  const env: Record<string, string> = {
     ...baseEnv,
+    // Explicit fixture sandbox; production launches never consume these overrides.
+    PI_APP_TEST_DATA_ROOT: distributionTestRoot(userDataDir, agentDir),
     PI_APP_USER_DATA_DIR: userDataDir,
     PI_APP_INITIAL_WORKSPACES: (options.initialWorkspaces ?? []).join(delimiter),
     PI_APP_TEST_MODE: options.testMode ?? process.env.PI_APP_TEST_MODE ?? "foreground",
@@ -438,8 +659,19 @@ function buildDesktopLaunchEnv(
   for (const [key, value] of Object.entries(options.envOverrides ?? {})) {
     if (value === undefined) {
       delete env[key];
+    } else {
+      env[key] = value;
     }
   }
+  for (const key of Object.keys(env)) {
+    if (isTelemetryEnvVar(key)) delete env[key];
+  }
+  // Every Electron proof is isolated from production telemetry transport. These
+  // values are applied after explicit overrides so no individual spec can opt a
+  // test launch back into the live service.
+  env.DO_NOT_TRACK = "1";
+  env.OTEL_SDK_DISABLED = "true";
+  env.PI_APP_TEST_TELEMETRY = "disabled";
 
   if (options.scrubProviderEnv || options.realAuthSourceDir) {
     for (const key of Object.keys(env)) {
@@ -450,6 +682,23 @@ function buildDesktopLaunchEnv(
   }
 
   return env;
+}
+
+/** Designate the canonical common sandbox used by this launch's prepared fixtures. */
+function distributionTestRoot(userDataDir: string, agentDir: string): string {
+  const user = realpathSync(userDataDir);
+  const agent = realpathSync(agentDir);
+  let root = user;
+  while (
+    relative(root, agent) === ".." ||
+    relative(root, agent).startsWith(`..${sep}`) ||
+    isAbsolute(relative(root, agent))
+  ) {
+    const parent = dirname(root);
+    if (parent === root) throw new Error("Fixture paths must share an isolated test root");
+    root = parent;
+  }
+  return root;
 }
 
 function resolvePackagedReleaseDir(rawPath: string | undefined): string | undefined {
@@ -588,7 +837,8 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 export async function makeUserDataDir(prefix = "pi-gui-user-data-"): Promise<string> {
-  return mkdtemp(join(tmpdir(), prefix));
+  // Match the resolver's canonical identity (macOS /var is a symlink to /private/var).
+  return realpath(await mkdtemp(join(tmpdir(), prefix)));
 }
 
 export async function seedAgentDir(

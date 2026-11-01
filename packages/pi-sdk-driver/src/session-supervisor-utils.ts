@@ -22,6 +22,7 @@ import type {
   SessionTranscriptItem,
   SessionTranscriptPin,
   SessionRunOutcome,
+  SessionTerminalRun,
   SessionUsageSnapshot,
   WorkspaceRef,
 } from "@pi-gui/session-driver";
@@ -50,10 +51,12 @@ export interface SnapshotSource {
   readonly session?:
     | {
         readonly messages: readonly unknown[];
+        readonly sessionId?: string;
         readonly sessionManager?: { getBranch(): readonly unknown[] };
       }
     | undefined;
   readonly stoppedReplyId?: string | undefined;
+  readonly terminalRun?: SessionTerminalRun | undefined;
 }
 
 /**
@@ -110,17 +113,39 @@ export function newestReplyEntryId(branch: readonly unknown[]): string | undefin
 export function sessionRunOutcome(source: {
   readonly session: NonNullable<SnapshotSource["session"]>;
   readonly stoppedReplyId?: string | undefined;
+  readonly terminalRun?: SessionTerminalRun | undefined;
 }): SessionRunOutcome | undefined {
+  const terminal = boundTerminalRun(source);
+  if (terminal) return terminal.outcome;
+  const branch = source.session.sessionManager?.getBranch();
   const outcome = lastRunOutcome(source.session.messages);
   if (outcome !== "completed" || source.stoppedReplyId === undefined) return outcome;
   // Without the branch the mark cannot be ruled out, so it counts: an archive is refused.
-  const branch = source.session.sessionManager?.getBranch();
   return !branch || newestReplyEntryId(branch) === source.stoppedReplyId ? "stopped" : outcome;
 }
 
+/** A different native session or branch never inherits an earlier settlement. */
+function boundTerminalRun(
+  source: Pick<SnapshotSource, "session" | "terminalRun">,
+): SessionTerminalRun | undefined {
+  const terminal = source.terminalRun;
+  const branch = source.session?.sessionManager?.getBranch();
+  if (!terminal || !branch || terminal.nativeSessionId !== source.session?.sessionId)
+    return undefined;
+  const leaf = branch.at(-1);
+  return terminal.branchLeafId === (isRecord(leaf) && typeof leaf.id === "string" ? leaf.id : "")
+    ? terminal
+    : undefined;
+}
+
 export function buildSnapshot(source: SnapshotSource): SessionSnapshot {
+  const terminalRun = boundTerminalRun(source);
   const outcome = source.session
-    ? sessionRunOutcome({ session: source.session, stoppedReplyId: source.stoppedReplyId })
+    ? sessionRunOutcome({
+        session: source.session,
+        stoppedReplyId: source.stoppedReplyId,
+        terminalRun: source.terminalRun,
+      })
     : undefined;
   return {
     ref: { ...source.ref },
@@ -134,6 +159,7 @@ export function buildSnapshot(source: SnapshotSource): SessionSnapshot {
     ...(source.runningRunId !== undefined ? { runningRunId: source.runningRunId } : {}),
     ...(source.usage ? { usage: source.usage } : {}),
     ...(outcome ? { lastRunOutcome: outcome } : {}),
+    ...(terminalRun ? { terminalRun: { ...terminalRun } } : {}),
     ...(source.queuedMessages.length > 0
       ? {
           queuedMessages: source.queuedMessages.map((message) => ({

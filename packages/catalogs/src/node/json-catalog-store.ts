@@ -24,6 +24,7 @@ import type {
   WorktreeCatalogSnapshot,
   WorktreeId,
 } from "../index.js";
+import type { SessionTerminalRun } from "@pi-gui/session-driver";
 import { sessionKey } from "@pi-gui/session-driver";
 
 interface CatalogFileCoordinator {
@@ -90,6 +91,9 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
           if (key.startsWith(`${workspaceId}:`)) {
             delete state.sessionFiles[key];
           }
+        }
+        for (const key of Object.keys(state.runs)) {
+          if (key.startsWith(`${workspaceId}:`)) delete state.runs[key];
         }
         for (const key of Object.keys(state.stoppedReplies)) {
           if (key.startsWith(`${workspaceId}:`)) {
@@ -188,6 +192,31 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
         }
       });
     },
+    beginRun: async (ref: SessionRef, runId: string): Promise<number> => {
+      let generation = 0;
+      await this.mutateState((state) => {
+        const key = sessionKey(ref);
+        generation = (state.runs[key]?.generation ?? 0) + 1;
+        state.runs[key] = { runId, generation };
+      });
+      return generation;
+    },
+    settleRun: async (ref: SessionRef, terminalRun: SessionTerminalRun): Promise<boolean> => {
+      let accepted = false;
+      await this.mutateState((state) => {
+        const run = state.runs[sessionKey(ref)];
+        if (
+          !run ||
+          run.runId !== terminalRun.runId ||
+          run.generation !== terminalRun.generation ||
+          run.terminalRun
+        )
+          return false;
+        run.terminalRun = { ...terminalRun };
+        accepted = true;
+      });
+      return accepted;
+    },
     setStoppedReplyId: async (
       sessionRef: SessionRef,
       replyId: string | undefined,
@@ -222,6 +251,7 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
         state.sessions = state.sessions.filter((session) => sessionKey(session.sessionRef) !== key);
         delete state.sessionFiles[key];
         delete state.stoppedReplies[key];
+        delete state.runs[key];
       });
     },
   };
@@ -407,6 +437,8 @@ function withStoppedReply(
   state: CatalogFileState,
 ): SessionCatalogEntry {
   const next = cloneSessionEntry(entry);
+  const terminal = state.runs[sessionKey(entry.sessionRef)]?.terminalRun;
+  if (terminal) next.terminalRun = { ...terminal };
   const replyId = state.stoppedReplies[sessionKey(entry.sessionRef)];
   if (replyId !== undefined) next.stoppedReplyId = replyId;
   return next;

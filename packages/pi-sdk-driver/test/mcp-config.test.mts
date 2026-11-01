@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,394 +8,359 @@ import {
   listMcpServers,
   removeMcpServer,
   setMcpServerEnabled,
+  updateMcpServer,
 } from "../dist/mcp-config.js";
 
-function setup() {
-  const root = mkdtempSync(join(tmpdir(), "pi-gui-mcp-config-"));
+interface Setup {
+  readonly root: string;
+  readonly agentDir: string;
+  readonly cwd: string;
+  readonly globalPath: string;
+  readonly projectPath: string;
+}
+
+async function withSetup(run: (setup: Setup) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "pi-gui-mcp-config-"));
   const agentDir = join(root, "agent");
   const cwd = join(root, "workspace");
-  mkdirSync(agentDir, { recursive: true });
-  mkdirSync(cwd, { recursive: true });
-  return { agentDir, cwd, globalPath: join(agentDir, "mcp.json") };
-}
-
-function readJson(path: string): unknown {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
-await test("editing one server keeps every other field, key and the file's indentation", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  const original = {
-    autoEnableCodemode: false,
-    mcpServers: {
-      docs: {
-        url: "https://example.com/mcp",
-        headers: { Authorization: "Bearer ${DOCS_TOKEN}" },
-        oauth: { clientId: "abc" },
-        exposure: "direct",
-      },
-      files: { command: "npx", args: ["-y", "server"], env: { SECRET: "s3cret" } },
-    },
-    somethingElse: { keep: true },
+  await mkdir(agentDir, { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  const setup = {
+    root,
+    agentDir,
+    cwd,
+    globalPath: join(agentDir, "mcp.json"),
+    projectPath: join(cwd, ".pi", "mcp.json"),
   };
-  writeFileSync(globalPath, `${JSON.stringify(original, null, "\t")}\n`);
+  try {
+    await run(setup);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
-  setMcpServerEnabled({ agentDir, cwd }, "global", "files", false);
-  const disabled = readFileSync(globalPath, "utf8");
-  assert.match(disabled, /^\t"autoEnableCodemode"/m, "tab indentation is kept");
-  assert.deepEqual(readJson(globalPath), {
-    ...original,
-    mcpServers: {
-      ...original.mcpServers,
-      files: { ...original.mcpServers.files, enabled: false },
-    },
-  });
+async function readJson(path: string): Promise<unknown> {
+  return JSON.parse((await readFile(path, "utf8")).replace(/^\uFEFF/, ""));
+}
 
-  setMcpServerEnabled({ agentDir, cwd }, "global", "files", true);
-  assert.deepEqual(readJson(globalPath), original, "switching back on deletes `enabled`");
+function jsonWithCrlf(value: unknown, indentation = "\t", newline = true): string {
+  const serialized = JSON.stringify(value, null, indentation).replaceAll("\n", "\r\n");
+  return `\uFEFF${serialized}${newline ? "\r\n" : ""}`;
+}
 
-  addMcpServer(
-    { agentDir, cwd },
-    { name: "local", command: "node", args: ["server.mjs", "--flag"] },
-  );
-  assert.deepEqual(readJson(globalPath), {
-    ...original,
-    mcpServers: {
-      ...original.mcpServers,
-      local: { command: "node", args: ["server.mjs", "--flag"] },
-    },
-  });
-
-  assert.equal(removeMcpServer(agentDir, "local"), true);
-  assert.deepEqual(readJson(globalPath), original);
-  assert.equal(removeMcpServer(agentDir, "local"), false);
-});
-
-await test("listing returns no secrets and marks project servers", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  writeFileSync(
-    globalPath,
-    JSON.stringify({
+await test("async mutation preserves BOM, CRLF, indentation, trailing newline and unrelated fields", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    const original = {
+      autoEnableCodemode: false,
       mcpServers: {
         docs: {
-          url: "https://user:pass@example.com/mcp",
-          headers: { Authorization: "Bearer TOKEN" },
-          enabled: false,
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer ${DOCS_TOKEN}" },
+          oauth: { clientId: "client-id" },
+          exposure: "direct",
+          unknownServerField: { preserve: true },
         },
-        files: { command: "npx", args: ["-y", "server"], env: { SECRET: "s3cret" } },
-        keyed: { url: "https://example.com/mcp?api_key=QUERYKEY#frag", env: {} },
-        signin: { url: "https://example.com/oauth", oauth: { clientSecret: "CLIENTSECRET" } },
-        broken: { url: "not a url?key=RAWKEY" },
+        files: {
+          command: "npx",
+          args: ["-y", "server"],
+          env: { SECRET: "existing-secret" },
+          customField: 7,
+        },
       },
-    }),
-  );
-  mkdirSync(join(cwd, ".pi"), { recursive: true });
-  writeFileSync(
-    join(cwd, ".pi", "mcp.json"),
-    JSON.stringify({ mcpServers: { project: { command: "./run" } } }),
-  );
+      somethingElse: { keep: true },
+    };
+    await writeFile(globalPath, jsonWithCrlf(original));
 
-  const listing = listMcpServers({ agentDir, cwd });
-  assert.deepEqual(listing, {
-    globalConfigPath: globalPath,
-    servers: [
-      {
-        name: "docs",
-        scope: "global",
-        transport: "http",
-        url: "https://example.com/mcp",
-        enabled: false,
-        hasHiddenSettings: true,
-      },
-      {
-        name: "files",
-        scope: "global",
-        transport: "stdio",
-        command: "npx",
-        args: ["-y", "server"],
-        enabled: true,
-        hasHiddenSettings: true,
-      },
-      {
-        name: "keyed",
-        scope: "global",
-        transport: "http",
-        url: "https://example.com/mcp?…",
-        enabled: true,
-        hasHiddenSettings: false,
-      },
-      {
-        name: "signin",
-        scope: "global",
-        transport: "http",
-        url: "https://example.com/oauth",
-        enabled: true,
-        hasHiddenSettings: true,
-      },
-      {
-        name: "broken",
-        scope: "global",
-        transport: "http",
-        url: "(invalid URL)",
-        enabled: true,
-        hasHiddenSettings: false,
-      },
-      {
-        name: "project",
-        scope: "project",
-        transport: "stdio",
-        command: "./run",
-        args: [],
-        enabled: true,
-        hasHiddenSettings: false,
-      },
-    ],
-    errors: [],
-  });
-  assert.doesNotMatch(
-    JSON.stringify(listing),
-    /s3cret|TOKEN|pass|QUERYKEY|frag|CLIENTSECRET|RAWKEY/,
-  );
+    await setMcpServerEnabled({ agentDir, cwd }, "global", "files", false);
+    await addMcpServer({ agentDir, cwd }, { name: "local", command: "node", args: ["server.mjs"] });
+    await updateMcpServer({ agentDir, cwd }, "global", "files", {
+      description: " Local server ",
+    });
 
-  setMcpServerEnabled({ agentDir, cwd }, "project", "project", false);
-  assert.deepEqual(readJson(join(cwd, ".pi", "mcp.json")), {
-    mcpServers: { project: { command: "./run", enabled: false } },
+    const changed = await readFile(globalPath, "utf8");
+    assert.ok(changed.startsWith("\uFEFF"));
+    assert.match(changed, /\r\n\t"autoEnableCodemode"/);
+    assert.ok(changed.endsWith("\r\n"));
+    const parsed = (await readJson(globalPath)) as typeof original;
+    assert.equal(parsed.autoEnableCodemode, false);
+    assert.deepEqual(parsed.somethingElse, { keep: true });
+    assert.deepEqual(parsed.mcpServers.docs, original.mcpServers.docs);
+    assert.deepEqual(parsed.mcpServers.files, {
+      ...original.mcpServers.files,
+      enabled: false,
+      description: "Local server",
+    });
+    assert.deepEqual(parsed.mcpServers.local, {
+      command: "node",
+      args: ["server.mjs"],
+    });
+
+    await setMcpServerEnabled({ agentDir, cwd }, "global", "files", true);
+    await updateMcpServer({ agentDir, cwd }, "global", "files", { description: null });
+    assert.equal(await removeMcpServer(agentDir, "local"), true);
+    const restored = (await readJson(globalPath)) as typeof original;
+    assert.deepEqual(restored, original);
   });
 });
 
-await test("a file that does not parse is reported and never overwritten", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  const broken = '{ "mcpServers": { "files": { "command": "npx", } ';
-  writeFileSync(globalPath, broken);
-
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "local", command: "node" }),
-    /mcp\.json/,
-  );
-  assert.throws(() => setMcpServerEnabled({ agentDir, cwd }, "global", "files", false));
-  assert.throws(() => removeMcpServer(agentDir, "files"));
-  assert.equal(readFileSync(globalPath, "utf8"), broken);
-
-  const listing = listMcpServers({ agentDir, cwd });
-  assert.deepEqual(listing.servers, []);
-  assert.equal(listing.errors.length, 1);
-});
-
-await test("new servers are validated and never replace an existing one", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  assert.throws(() => addMcpServer({ agentDir, cwd }, { name: " ", command: "node" }), /name/);
-  assert.throws(() => addMcpServer({ agentDir, cwd }, { name: "a", command: "  " }), /command/);
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "a", url: "file:///etc/passwd" }),
-    /URL/,
-  );
-  assert.throws(() => addMcpServer({ agentDir, cwd }, { name: "a", url: "not a url" }), /URL/);
-  assert.equal(existsSync(globalPath), false, "nothing is written for rejected input");
-
-  addMcpServer({ agentDir, cwd }, { name: "remote", url: "https://example.com/mcp" });
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "remote", command: "node" }),
-    /already exists/,
-  );
-  assert.deepEqual(readJson(globalPath), {
-    mcpServers: { remote: { url: "https://example.com/mcp" } },
+await test("existing trailing-newline absence and compact formatting are preserved", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    const original = '{"mcpServers":{"files":{"command":"node"}},"keep":true}';
+    await writeFile(globalPath, original);
+    await setMcpServerEnabled({ agentDir, cwd }, "global", "files", false);
+    const text = await readFile(globalPath, "utf8");
+    assert.ok(text.startsWith('{"mcpServers"'));
+    assert.equal(text.endsWith("\n"), false);
+    assert.deepEqual(await readJson(globalPath), {
+      mcpServers: { files: { command: "node", enabled: false } },
+      keep: true,
+    });
   });
 });
 
-await test("server names follow pi's rule and Object keys are ordinary names", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  for (const name of ["my docs", "docs.v2", "docs/api", "dócs"]) {
-    assert.throws(
-      () => addMcpServer({ agentDir, cwd }, { name, command: "node" }),
-      /Invalid MCP server name/,
+await test("effective listing composes trusted project full and override-only entries", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath, projectPath }) => {
+    await writeFile(
+      globalPath,
+      JSON.stringify({
+        autoEnableCodemode: false,
+        mcpServers: {
+          shared: {
+            url: "https://user:pass@example.com/shared?api_key=GLOBAL_KEY",
+            headers: { Authorization: "Bearer GLOBAL_SECRET" },
+            auth: { provider: "global-provider" },
+            description: "Global description",
+          },
+          "tool-name": { command: "node", args: ["--api-key", "ARG_SECRET"] },
+          authenticated: {
+            url: "https://example.com/authenticated",
+            auth: { provider: "global-provider" },
+          },
+        },
+      }),
     );
-  }
-  assert.equal(existsSync(globalPath), false, "nothing is written for rejected names");
+    await mkdir(join(cwd, ".pi"), { recursive: true });
+    await writeFile(
+      projectPath,
+      JSON.stringify({
+        autoEnableCodemode: true,
+        mcpServers: {
+          shared: {
+            command: "node",
+            args: ["project.mjs"],
+            env: { PROJECT_TOKEN: "PROJECT_SECRET" },
+          },
+          "tool-name": { enabled: false, exposure: "hidden" },
+          authenticated: { enabled: false },
+          repo: { url: "https://example.com/repo", unknownField: "UNKNOWN_SECRET" },
+        },
+      }),
+    );
 
-  assert.equal(removeMcpServer(agentDir, "toString"), false);
-  for (const name of ["toString", "constructor", "__proto__"]) {
-    addMcpServer({ agentDir, cwd }, { name, command: "node" });
-  }
-  assert.deepEqual(savedNames(globalPath), ["toString", "constructor", "__proto__"]);
-  assert.deepEqual(
-    listMcpServers({ agentDir, cwd }).servers.map((server) => server.name),
-    ["toString", "constructor", "__proto__"],
-  );
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "__proto__", command: "node" }),
-    /already exists/,
-  );
+    const listing = listMcpServers({ agentDir, cwd });
+    assert.equal(listing.autoEnableCodeMode, true);
+    assert.equal(listing.projectTrusted, true);
+    assert.deepEqual(
+      listing.servers.map((server) => `${server.scope}:${server.name}:${server.overridden}`),
+      [
+        "project:shared:true",
+        "project:tool-name:true",
+        "project:authenticated:true",
+        "project:repo:false",
+      ],
+    );
+    assert.equal(listing.servers[0]?.transport, "stdio");
+    assert.equal(listing.servers[0]?.enabled, true);
+    assert.equal(listing.servers[1]?.enabled, false);
+    assert.equal(listing.servers[2]?.secretPresence.providerAuth, true);
+    assert.deepEqual(listing.servers[1]?.secretPresence, {
+      environment: false,
+      headers: false,
+      oauth: false,
+      providerAuth: false,
+      credentialLikeArguments: true,
+      unknownFields: false,
+    });
+    assert.equal(listing.servers[3]?.secretPresence.unknownFields, true);
+    assert.doesNotMatch(
+      JSON.stringify(listing),
+      /GLOBAL_KEY|GLOBAL_SECRET|PROJECT_SECRET|ARG_SECRET|UNKNOWN_SECRET|pass/,
+    );
 
-  setMcpServerEnabled({ agentDir, cwd }, "global", "__proto__", false);
-  assert.equal(removeMcpServer(agentDir, "__proto__"), true);
-  assert.equal(removeMcpServer(agentDir, "constructor"), true);
-  assert.equal(removeMcpServer(agentDir, "hasOwnProperty"), false);
-  assert.throws(
-    () => setMcpServerEnabled({ agentDir, cwd }, "global", "valueOf", false),
-    /does not define/,
-  );
-  assert.deepEqual(savedNames(globalPath), ["toString"]);
-});
-
-function savedNames(path: string): string[] {
-  return Object.keys((readJson(path) as { mcpServers: object }).mcpServers);
-}
-
-await test("stdio arguments that look like credentials are masked in listings", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  const args = [
-    "-y",
-    "@example/server",
-    "--api-key",
-    "ARG_SECRET_1",
-    "--token=ARG_SECRET_2",
-    "GITHUB_TOKEN=ARG_SECRET_3",
-    "--header",
-    "Authorization: Bearer ARG_SECRET_4",
-    "--password",
-    "--verbose",
-    "--port",
-    "8080",
-    "LOG_LEVEL=debug",
-    "https://example.com/data",
-    "https://example.com/mcp?api_key=ARG_SECRET_5",
-    "https://user:ARG_SECRET_6@example.com/mcp",
-    "SERVER_URL=https://example.com/mcp?t=ARG_SECRET_7",
-  ];
-  writeFileSync(globalPath, JSON.stringify({ mcpServers: { tools: { command: "npx", args } } }));
-
-  const [server] = listMcpServers({ agentDir, cwd }).servers;
-  assert.deepEqual(server?.args, [
-    "-y",
-    "@example/server",
-    "--api-key",
-    "•••",
-    "--token=•••",
-    "GITHUB_TOKEN=•••",
-    "--header",
-    "Authorization: •••",
-    "--password",
-    "--verbose",
-    "--port",
-    "8080",
-    "LOG_LEVEL=debug",
-    "https://example.com/data",
-    "https://example.com/mcp?…",
-    "https://example.com/mcp",
-    "SERVER_URL=https://example.com/mcp?…",
-  ]);
-  assert.doesNotMatch(JSON.stringify(server), /ARG_SECRET/);
-  assert.deepEqual(
-    (readJson(globalPath) as { mcpServers: { tools: { args: string[] } } }).mcpServers.tools.args,
-    args,
-    "the file keeps the real values",
-  );
-});
-
-await test("a new server whose name differs from another only by - and _ is refused", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  addMcpServer({ agentDir, cwd }, { name: "my-docs", command: "node" });
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "my_docs", command: "node" }),
-    /"my-docs" already exists/,
-  );
-
-  mkdirSync(join(cwd, ".pi"));
-  writeFileSync(
-    join(cwd, ".pi", "mcp.json"),
-    JSON.stringify({ mcpServers: { "team-search": { command: "node" } } }),
-  );
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "team_search", command: "node" }),
-    /"team-search" already exists/,
-    "a clash with this project's file would make pi skip the project's server",
-  );
-  // The same name overrides the global server in pi, so it is not a clash.
-  addMcpServer({ agentDir, cwd }, { name: "team-search", url: "https://example.com/mcp" });
-  assert.deepEqual(savedNames(globalPath), ["my-docs", "team-search"]);
-});
-
-await test("a new global server is refused when it clashes with another open folder's", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  const other = mkdtempSync(join(tmpdir(), "pi-gui-mcp-other-"));
-  mkdirSync(join(other, ".pi"));
-  writeFileSync(
-    join(other, ".pi", "mcp.json"),
-    JSON.stringify({ mcpServers: { "my-docs": { command: "node" } } }),
-  );
-  assert.throws(
-    () => addMcpServer({ agentDir, cwd }, { name: "my_docs", command: "node" }, [other]),
-    /"my-docs" already exists in .*pi-gui-mcp-other-/,
-    "pi would skip the other folder's server once the global file has the new one",
-  );
-  addMcpServer({ agentDir, cwd }, { name: "my-docs", command: "node" }, [other]);
-  assert.deepEqual(savedNames(globalPath), ["my-docs"]);
-});
-
-await test("listings name the servers pi skips, and why", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  writeFileSync(
-    globalPath,
-    JSON.stringify({
-      mcpServers: {
-        "my-docs": { command: "node" },
-        my_docs: { command: "node" },
-        shared: { url: "https://example.com/mcp", auth: { provider: "radius" } },
-      },
-    }),
-  );
-  mkdirSync(join(cwd, ".pi"));
-  writeFileSync(
-    join(cwd, ".pi", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        shared: { command: "node" },
-        repo: { url: "https://example.com/repo", auth: { provider: "radius" } },
-        both: { url: "https://example.com/both", command: "node", auth: { provider: "radius" } },
-      },
-    }),
-  );
-
-  const listing = listMcpServers({ agentDir, cwd });
-  assert.deepEqual(
-    listing.servers.map((server) => `${server.scope}:${server.name}`),
-    [
-      "global:my-docs",
-      "global:my_docs",
-      "global:shared",
-      "project:shared",
-      "project:repo",
-      "project:both",
-    ],
-  );
-  assert.equal(listing.errors.length, 3);
-  assert.match(listing.errors[0] ?? "", /skips MCP server "my_docs".*clashes with "my-docs"/);
-  assert.match(listing.errors[1] ?? "", /skips MCP server "repo".*only allowed in the global/);
-  // pi takes a server with both a url and a command as http.
-  assert.match(listing.errors[2] ?? "", /skips MCP server "both".*only allowed in the global/);
-  assert.equal(
-    listing.servers.find((server) => server.name === "shared" && server.scope === "global")
-      ?.hasHiddenSettings,
-    true,
-    "a server signed in through a provider has settings removing it would lose",
-  );
-});
-
-await test("a description is saved when given and listed with the server", () => {
-  const { agentDir, cwd, globalPath } = setup();
-  addMcpServer(
-    { agentDir, cwd },
-    { name: "docs", description: "  Searches the team's docs ", url: "https://example.com/mcp" },
-  );
-  addMcpServer({ agentDir, cwd }, { name: "files", description: "  ", command: "node" });
-  assert.deepEqual(readJson(globalPath), {
-    mcpServers: {
-      docs: { url: "https://example.com/mcp", description: "Searches the team's docs" },
-      files: { command: "node" },
-    },
+    const untrusted = listMcpServers({ agentDir, cwd, projectTrusted: false });
+    assert.deepEqual(
+      untrusted.servers.map((server) => `${server.scope}:${server.name}`),
+      ["global:shared", "global:tool-name", "global:authenticated"],
+    );
   });
-  assert.deepEqual(
-    listMcpServers({ agentDir, cwd }).servers.map((server) => server.description),
-    ["Searches the team's docs", undefined],
-  );
+});
+
+await test("malformed, rejected and missing mutations preserve bytes and report sanitized errors", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    const broken = '{"mcpServers":{"secret":{"env":{"TOKEN":"MALFORMED_SECRET"}},}}';
+    await writeFile(globalPath, broken);
+    for (const operation of [
+      () => addMcpServer({ agentDir, cwd }, { name: "safe", command: "node" }),
+      () => setMcpServerEnabled({ agentDir, cwd }, "global", "secret", false),
+      () => removeMcpServer(agentDir, "secret"),
+      () =>
+        updateMcpServer({ agentDir, cwd }, "global", "secret", {
+          description: "UPDATED_SECRET",
+        }),
+    ]) {
+      await assert.rejects(operation, (error: unknown) => {
+        assert.doesNotMatch(String(error), /MALFORMED_SECRET|UPDATED_SECRET/);
+        return /invalid JSON/.test(String(error));
+      });
+      assert.equal(await readFile(globalPath, "utf8"), broken);
+    }
+  });
+});
+
+await test("missing file initializes cleanly and current-state operations are byte-preserving no-ops", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    assert.equal(await removeMcpServer(agentDir, "missing"), false);
+    await assert.rejects(readFile(globalPath), /ENOENT/);
+
+    await addMcpServer({ agentDir, cwd }, { name: "files", command: "node" });
+    const before = await readFile(globalPath, "utf8");
+    await setMcpServerEnabled({ agentDir, cwd }, "global", "files", true);
+    await updateMcpServer({ agentDir, cwd }, "global", "files", { command: "node" });
+    assert.equal(await readFile(globalPath, "utf8"), before);
+  });
+});
+
+await test("name, URL and schema validation are sanitized and do not write", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    for (const server of [
+      { name: " ", command: "node" },
+      { name: "a", command: "  " },
+      { name: "a", url: "file:///etc/passwd?secret=URL_SECRET" },
+      { name: "a", url: "not a url" },
+    ]) {
+      await assert.rejects(
+        addMcpServer({ agentDir, cwd }, server),
+        (error: unknown) => !String(error).includes("URL_SECRET"),
+      );
+    }
+    await assert.rejects(readFile(globalPath), /ENOENT/);
+
+    await addMcpServer({ agentDir, cwd }, { name: "remote", url: "https://example.com/mcp" });
+    await assert.rejects(
+      addMcpServer({ agentDir, cwd }, { name: "remote", command: "node" }),
+      /already exists/,
+    );
+  });
+});
+
+await test("prototype-shaped names remain ordinary JSON object keys", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    for (const name of ["toString", "constructor", "__proto__"]) {
+      await addMcpServer({ agentDir, cwd }, { name, command: "node" });
+    }
+    const parsed = (await readJson(globalPath)) as { mcpServers: Record<string, unknown> };
+    assert.deepEqual(Object.keys(parsed.mcpServers), ["toString", "constructor", "__proto__"]);
+    assert.equal(await removeMcpServer(agentDir, "__proto__"), true);
+    assert.equal(await removeMcpServer(agentDir, "constructor"), true);
+    assert.deepEqual(
+      Object.keys(
+        ((await readJson(globalPath)) as { mcpServers: Record<string, unknown> }).mcpServers,
+      ),
+      ["toString"],
+    );
+  });
+});
+
+await test("namespace conflicts across global and project dependencies are refused", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    await addMcpServer({ agentDir, cwd }, { name: "my-docs", command: "node" });
+    await assert.rejects(
+      addMcpServer({ agentDir, cwd }, { name: "my_docs", command: "node" }),
+      /namespace/,
+    );
+
+    const other = join(cwd, "..", "other-workspace");
+    await mkdir(join(other, ".pi"), { recursive: true });
+    await writeFile(
+      join(other, ".pi", "mcp.json"),
+      JSON.stringify({ mcpServers: { "team-search": { command: "node" } } }),
+    );
+    await assert.rejects(
+      addMcpServer({ agentDir, cwd }, { name: "team_search", command: "node" }, [other]),
+      /namespace/,
+    );
+    await addMcpServer({ agentDir, cwd }, { name: "team-search", command: "node" }, [other]);
+    assert.deepEqual(
+      Object.keys(((await readJson(globalPath)) as { mcpServers: object }).mcpServers),
+      ["my-docs", "team-search"],
+    );
+  });
+});
+
+await test("stdio credential-like arguments are masked and hidden detection includes unknown fields", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath }) => {
+    const args = [
+      "-y",
+      "@example/server",
+      "--api-key",
+      "ARG_SECRET_1",
+      "--token=ARG_SECRET_2",
+      "GITHUB_TOKEN=ARG_SECRET_3",
+      "--header",
+      "Authorization: Bearer ARG_SECRET_4",
+      "--password",
+      "--verbose",
+      "https://user:ARG_SECRET_5@example.com/mcp?api_key=ARG_SECRET_6",
+    ];
+    await writeFile(
+      globalPath,
+      JSON.stringify({
+        mcpServers: {
+          tools: {
+            command: "npx",
+            args,
+            env: { SECRET: "ENV_SECRET" },
+            custom: "UNKNOWN_SECRET",
+          },
+        },
+      }),
+    );
+    const [server] = listMcpServers({ agentDir, cwd }).servers;
+    assert.equal(server?.hasHiddenSettings, true);
+    assert.equal(server?.secretPresence.credentialLikeArguments, true);
+    assert.equal(server?.secretPresence.unknownFields, true);
+    assert.doesNotMatch(JSON.stringify(server), /ARG_SECRET|ENV_SECRET|UNKNOWN_SECRET/);
+    assert.match(JSON.stringify(server), /•/);
+  });
+});
+
+await test("description is saved and project auth is rejected like pi", async () => {
+  await withSetup(async ({ agentDir, cwd, globalPath, projectPath }) => {
+    await addMcpServer(
+      { agentDir, cwd },
+      { name: "docs", description: "  Team docs ", url: "https://example.com/mcp" },
+    );
+    assert.deepEqual(await readJson(globalPath), {
+      mcpServers: { docs: { url: "https://example.com/mcp", description: "Team docs" } },
+    });
+    await mkdir(join(cwd, ".pi"), { recursive: true });
+    await writeFile(
+      projectPath,
+      JSON.stringify({
+        mcpServers: {
+          unsafe: {
+            url: "https://example.com/mcp",
+            auth: { provider: "SECRET_PROVIDER" },
+          },
+        },
+      }),
+    );
+    const listing = listMcpServers({ agentDir, cwd });
+    assert.equal(
+      listing.servers.some((server) => server.name === "unsafe"),
+      false,
+    );
+    assert.match(listing.errors.join("\n"), /only allowed in the global/);
+    assert.doesNotMatch(JSON.stringify(listing), /SECRET_PROVIDER/);
+  });
 });

@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { WorkspaceRecord, WorktreeRecord } from "../../../contracts/desktop-state";
 import type { PiDesktopApi } from "../../../contracts/ipc";
+import "../../styles/file-workbench-responsive.css";
 import { FileEditorPane } from "./file-editor-pane";
 import { FileExplorer } from "./file-explorer";
 import { activateFile, closeFile, openFile, type FileWorkbenchTabs } from "./file-workbench-state";
@@ -87,22 +88,24 @@ export function FileWorkbench({
       className="side-panel file-workbench file-workbench--split"
       data-testid="file-workbench"
     >
-      <FileEditorPane
-        api={api}
-        tabs={tabs}
-        worktree={worktree}
-        workspace={workspace}
-        onActivate={(path) => onTabsChange((current) => activateFile(current, path))}
-        onClose={(path) => onTabsChange((current) => closeFile(current, path))}
-      />
-      <FileExplorer
-        error={listError}
-        files={files}
-        loading={loading}
-        selectedPath={tabs.active}
-        onRefresh={() => refresh({ force: true })}
-        onSelect={(path) => onTabsChange((current) => openFile(current, path))}
-      />
+      <div className="file-workbench__layout">
+        <FileExplorer
+          error={listError}
+          files={files}
+          loading={loading}
+          selectedPath={tabs.active}
+          onRefresh={() => refresh({ force: true })}
+          onSelect={(path) => onTabsChange((current) => openFile(current, path))}
+        />
+        <FileEditorPane
+          api={api}
+          tabs={tabs}
+          worktree={worktree}
+          workspace={workspace}
+          onActivate={(path) => onTabsChange((current) => activateFile(current, path))}
+          onClose={(path) => onTabsChange((current) => closeFile(current, path))}
+        />
+      </div>
     </section>
   );
 }

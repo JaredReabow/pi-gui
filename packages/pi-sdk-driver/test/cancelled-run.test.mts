@@ -39,3 +39,66 @@ await test("requested abort emits only idle state, without completion or failure
   const nextEvents = supervisor.mapAgentEvent(record, { type: "agent_settled" });
   assert.equal(nextEvents[0]?.type, "runFailed", "the cancellation marker is consumed once");
 });
+
+await test("authoritative no-assistant settlement retains captured identity after visible running id clears", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { JsonCatalogStore } = await import("@pi-gui/catalogs/node");
+  const { buildSnapshot } = await import("../dist/session-supervisor-utils.js");
+  const root = await mkdtemp(join(tmpdir(), "zero-assistant-terminal-"));
+  const catalog = new JsonCatalogStore({ catalogFilePath: join(root, "catalog.json") });
+  const ref = { workspaceId: "workspace", sessionId: "native" };
+  await catalog.sessions.upsertSession({
+    sessionRef: ref,
+    workspaceId: ref.workspaceId,
+    title: "No assistant",
+    status: "idle",
+    updatedAt: "2026-10-31T00:00:00Z",
+  });
+  const generation = await catalog.sessions.beginRun(ref, "captured-run");
+  const record = {
+    ref,
+    workspace: { workspaceId: ref.workspaceId, path: root },
+    title: "No assistant",
+    status: "idle",
+    updatedAt: "2026-10-31T00:00:00Z",
+    queuedMessages: [],
+    runningRunId: undefined,
+    activeTerminalRun: {
+      runId: "captured-run",
+      generation,
+      sessionRef: ref,
+      nativeSessionId: ref.sessionId,
+    },
+    cancellationRequested: true,
+    stopBeforeSettle: true,
+    runAwaitingSettle: true,
+    session: {
+      sessionId: ref.sessionId,
+      messages: [{ role: "user", content: "Input" }],
+      sessionManager: {
+        getBranch: () => [{ type: "message", id: "input", message: { role: "user" } }],
+      },
+    },
+  };
+  const supervisor = new SessionSupervisor({ catalogStorage: catalog });
+  // Runtime boundary injection exercises the missing representation without rewriting history.
+  const boundary = supervisor as unknown as {
+    refreshUsage(): void;
+    collectSessionCommands(): unknown[];
+    mapAgentEvent(record: unknown, event: unknown): SessionDriverEvent[];
+  };
+  boundary.refreshUsage = () => undefined;
+  boundary.collectSessionCommands = () => [];
+  const events = boundary.mapAgentEvent(record, { type: "agent_settled", aborted: true });
+  await (record as typeof record & { terminalWrite: Promise<void> }).terminalWrite;
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["sessionUpdated"],
+  );
+  const terminal = (await catalog.sessions.getSession(ref))?.terminalRun;
+  assert.equal(terminal?.runId, "captured-run");
+  assert.equal(terminal?.outcome, "stopped");
+  assert.equal(buildSnapshot(record).lastRunOutcome, "stopped");
+});

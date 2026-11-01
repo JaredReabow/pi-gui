@@ -3,14 +3,19 @@
 The desktop app for the [pi](https://github.com/earendil-works/pi) coding agent.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/minghinmatthewlam/pi-gui?include_prereleases&label=release)](https://github.com/minghinmatthewlam/pi-gui/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#install)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#local-candidate-builds)
+
+> This checkout is a distribution source foundation. It has no approved public
+> product identity, repository, download domain, update feed, signing identity,
+> or release. Builds produced from it are local candidates: update checks and
+> publication are disabled. Upstream links in this document preserve provenance
+> and do not identify this distribution's installation destinations.
 
 Run agents in parallel threads, each in its own git worktree if you want one. Review every
 change, run the tests in a real terminal, and ship without leaving the window. pi-gui is a
 desktop shell around [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent),
-not a separate agent: sessions, models, auth and tools all run through pi itself, so anything
-you set up with the pi CLI carries over.
+not a separate agent: sessions, models, auth and tools all run through pi itself.
+Candidate builds use a separate distribution-owned Pi profile.
 
 [![An agent in pi-gui fixing a bug, running the tests, then the change open in the review tab](./apps/website/public/media/hero.gif)](./apps/website/public/media/hero.mp4)
 
@@ -82,44 +87,35 @@ the review tab, your worktrees, and tabs from desktop extensions. Each task keep
 - **Themes.** Light and dark, plus presets like Catppuccin, Tokyo Night, Nord, Dracula,
   Gruvbox and GitHub.
 
-## Install
+## Local candidate builds
 
-pi-gui runs on macOS (Apple Silicon), Linux (x64) and Windows (x64).
+There is no public download for this distribution yet. The source supports
+macOS (Apple Silicon), Linux (x64), and Windows (x64) packaging through the
+checked-in candidate metadata, but a package is not a published or qualified
+release.
 
-Download the latest `.dmg` (macOS), `.AppImage` or `.deb` (Linux), or `.exe` (Windows) from the
-[Releases page](https://github.com/minghinmatthewlam/pi-gui/releases).
+Candidate builds use the stable `pi-gui-candidate` application and data
+identity. They do not use the installed upstream app's data directory, and
+they do not import `~/.pi/agent` automatically. Existing personal data can only
+be selected through a future explicit import flow.
 
-- **macOS:** drag `pi-gui.app` into Applications. Releases are signed and notarized.
-- **Linux:** make the AppImage executable and run it, or install the `.deb`.
-- **Windows:** run the setup `.exe`, or use the portable `.exe`. Builds are not code-signed
-  yet, so SmartScreen may ask you to confirm.
-
-On macOS you can also use Homebrew:
-
-```bash
-brew tap minghinmatthewlam/tap
-brew trust minghinmatthewlam/tap
-brew install --cask pi-gui
-```
-
-Homebrew refuses to load casks from untrusted third-party taps, so the
-`brew trust` step is required on first install.
-
-Update with `brew upgrade --cask pi-gui`. A Homebrew upgrade may ask you to
-re-confirm macOS permissions or Dock placement. Other installs tell you when a new release is
-out and update from the Releases page.
+Optional usage and crash telemetry is operational in development and release
+builds, but both choices start off. Test launches disable the production
+telemetry transport. The app does not create a telemetry identity, capture, or
+queue data before the relevant user choice.
 
 Building from source is for contributors; see [Development](#development).
 
 ## Quickstart
 
-1. Install pi-gui and open it.
+1. Open the local `pi-gui Candidate` build.
 2. Open **Settings → Providers** and connect a model provider (OAuth or API key).
 3. Add a workspace: a local project folder.
 4. Click **New thread**, choose **Local** or **Worktree**, and send your first prompt.
 
-pi-gui reads and writes pi's own session files and settings, so threads, credentials and
-skills are shared with the pi CLI.
+A candidate reads and writes Pi session files and settings in its own
+distribution-owned agent directory. It does not silently share or modify the
+global `~/.pi/agent` profile used by the Pi CLI.
 
 ## Architecture
 
@@ -178,7 +174,10 @@ platform, and how the product media is recorded.
 ## Repository layout
 
 - `apps/desktop`: the Electron app (renderer, main and preload).
-- `apps/website`: [pi-gui.com](https://www.pi-gui.com).
+- `apps/website`: the website source shell. Its public identity and domain remain unresolved.
+- `packages/distribution-config`: the shared candidate, release-manifest,
+  publication-gate, and support-policy contract.
+- `packages/distribution-support`: the accepted voluntary-support policy.
 - `packages/pi-sdk-driver`: the adapter over `@earendil-works/pi-coding-agent`.
 - `packages/session-driver`: shared session driver types.
 - `packages/catalogs`: workspace and session catalog state.
@@ -205,6 +204,12 @@ MCP-capable agent can use.
 
 Built on [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 and the [pi](https://github.com/earendil-works/pi) runtime and ecosystem.
+
+This distribution preserves the source history, contribution record, and MIT
+attribution of the original
+[`pi-gui` project](https://github.com/minghinmatthewlam/pi-gui), created by
+Matthew Lam. A separate distribution publisher, repository, domain, support
+contact, and copyright line remain unresolved publication decisions.
 
 ## License
 

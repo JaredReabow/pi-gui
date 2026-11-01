@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { OrchestrationChildThread } from "../../contracts/desktop-state";
 import {
+  chooseThreadGrouping,
   getDesktopState,
   getSelectedTranscript,
   launchDesktop,
@@ -106,6 +107,7 @@ test("children nest under their parent; the archive tool archives only finished 
   let harness = await launch();
   try {
     let window = await harness.firstWindow();
+    await chooseThreadGrouping(window, "workspace");
     const group = window.getByRole("group", { name: "Children of 主任务 A", exact: true });
     await expect(group.locator(".session-row")).toHaveCount(3);
     await expect(group).toContainText(done.title);
@@ -138,7 +140,18 @@ test("children nest under their parent; the archive tool archives only finished 
     await expect(group).toBeVisible();
     const doneRow = window.locator(`.session-row[data-session-id="${done.sessionId}"]`);
     await doneRow.hover();
-    await doneRow.getByRole("button", { name: new RegExp(`^Pin ${done.title}`) }).click();
+    const pinButton = doneRow.getByRole("button", {
+      name: new RegExp(`^Pin ${done.title}`),
+    });
+    await pinButton.click();
+    await expect
+      .poll(
+        async () =>
+          (await getDesktopState(window)).workspaces
+            .flatMap((workspace) => workspace.sessions)
+            .find((session) => session.id === done.sessionId)?.pinnedAt ?? null,
+      )
+      .not.toBeNull();
     await expect(
       window.locator(`.session-list--pinned .session-row[data-session-id="${done.sessionId}"]`),
     ).toBeVisible();

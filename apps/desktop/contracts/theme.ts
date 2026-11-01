@@ -188,7 +188,7 @@ export function deriveThemeTokens(seedValue: ThemeSeed, variant: ResolvedTheme):
     seedValue.added,
     seedValue.removed,
     seedValue.warning,
-  ].map((color) => deepenForContrast(color, ink, s, 3)) as [string, string, string, string];
+  ].map((color) => ensureContrast(color, ink, s, 3)) as [string, string, string, string];
   const pick = (lightValue: number, darkValue: number): number => (light ? lightValue : darkValue);
   // Text greys are the ink faded toward the surface; lines and fills are the
   // surface tinted toward the ink. Dark "under" surfaces sink toward black.
@@ -342,18 +342,34 @@ function fadeWithContrast(
   return mix(ink, surface, fitted);
 }
 
-/** Moves `color` toward `ink` until it reaches `minContrast` against `surface`. */
-function deepenForContrast(
+/**
+ * Moves a hexadecimal foreground colour toward `ink` until it reaches
+ * `minContrast` against `surface`. Syntax themes contain useful hues whose
+ * contrast was tuned for their editor background, while pi-gui also paints
+ * them on derived code-block and diff backgrounds.
+ */
+export function ensureContrast(
   color: string,
   ink: string,
   surface: string,
   minContrast: number,
 ): string {
+  const opaque = (value: string): string | undefined =>
+    value
+      .match(/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i)?.[0]
+      .slice(0, 7)
+      .toLowerCase();
+  const base = opaque(color);
+  const contrastInk = opaque(ink);
+  const contrastSurface = opaque(surface);
+  if (!base || !contrastInk || !contrastSurface) return color;
   let amount = 0;
-  while (amount < 1 && contrastRatio(mix(color, ink, amount), surface) < minContrast) {
+  let fitted = base;
+  while (amount < 1 && contrastRatio(fitted, contrastSurface) < minContrast) {
     amount = Math.min(1, amount + 0.02);
+    fitted = mix(base, contrastInk, amount);
   }
-  return mix(color, ink, amount);
+  return fitted;
 }
 
 /** WCAG contrast ratio between two #rrggbb colours. */

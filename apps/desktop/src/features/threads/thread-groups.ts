@@ -1,10 +1,13 @@
 import type {
   ChildThreadLink,
   DesktopAppState,
+  OrchestrationChildThreadStatus,
   SessionRecord,
   ThreadGrouping,
   WorkspaceRecord,
 } from "../../../contracts/desktop-state";
+import type { ChildSelectedConfiguration } from "../../../contracts/child-selection";
+import type { AllThreadsSort, FolderPreference } from "../../../contracts/sidebar-preferences";
 import {
   compareByRecency,
   RECENCY_BUCKET_LABELS,
@@ -13,6 +16,19 @@ import {
   sessionLastInteractedAt,
   type RecencyBucketId,
 } from "../../../contracts/thread-recency";
+import {
+  sidebarOrder_compareThreads,
+  sidebarOrder_dedupeBySession,
+  sidebarOrder_dedupeBySessionId,
+  sidebarOrder_sortThreads,
+} from "./sidebar-order";
+import {
+  sidebarPreferences_childOriginGroup,
+  sidebarPreferences_folderState,
+  sidebarPreferences_markReadTargets,
+  sidebarPreferences_previewTree,
+  type SidebarChildOriginGroup,
+} from "./sidebar-preferences";
 
 export interface ThreadEnvironmentMeta {
   readonly kind: "local" | "worktree";
@@ -29,7 +45,14 @@ export interface ThreadListEntry {
   readonly contextLabel: string;
   /** Set when this row is drawn nested under its parent thread's row. */
   readonly parentKey?: string;
-  /** Child threads drawn nested under this row, most recent first. */
+  readonly childStatus?: OrchestrationChildThreadStatus;
+  /** Explicit host initiating identity; absent or correlation-only data stays unknown. */
+  readonly childOriginGroup?: SidebarChildOriginGroup;
+  readonly childSelectedConfig?: ChildSelectedConfiguration;
+  readonly childCreatedAt?: string;
+  /** Number of all descendants, not including this row. */
+  readonly descendantCount?: number;
+  /** Child threads drawn nested under this row in the selected All Threads order. */
   readonly children?: readonly ThreadListEntry[];
 }
 
@@ -44,11 +67,28 @@ export function threadHistoryPreview<T>(
   threads: readonly T[],
   expanded: boolean,
 ): { readonly visible: readonly T[]; readonly overflow: boolean } {
-  const overflow = threads.length > THREAD_HISTORY_PREVIEW_LIMIT;
-  return {
-    visible: overflow && !expanded ? threads.slice(0, THREAD_HISTORY_PREVIEW_LIMIT) : threads,
-    overflow,
+  const sizeOf = (thread: T): number => {
+    const children = (thread as T & { readonly children?: readonly T[] }).children ?? [];
+    return 1 + children.reduce((total, child) => total + sizeOf(child), 0);
   };
+  const totalCount = threads.reduce((total, thread) => total + sizeOf(thread), 0);
+  if (totalCount <= THREAD_HISTORY_PREVIEW_LIMIT) {
+    return { visible: threads, overflow: false };
+  }
+  const visible: T[] = [];
+  let visibleCount = 0;
+  for (const thread of threads) {
+    const treeSize = sizeOf(thread);
+    if (visible.length > 0 && visibleCount + treeSize > THREAD_HISTORY_PREVIEW_LIMIT) break;
+    visible.push(thread);
+    visibleCount += treeSize;
+  }
+  const collapsed = {
+    // Keep the first tree complete even when the tree itself exceeds the preview budget.
+    visible: visible.length > 0 ? visible : threads.slice(0, 1),
+    overflow: true,
+  };
+  return expanded ? { visible: threads, overflow: collapsed.overflow } : collapsed;
 }
 
 export interface RecencyThreadSection {
@@ -64,30 +104,59 @@ export interface ThreadSidebarModel {
   readonly recencySections: readonly RecencyThreadSection[];
   readonly archivedThreads: readonly ThreadListEntry[];
   readonly recencyOrder: readonly ThreadListEntry[];
+  readonly allThreadsRoots: readonly ThreadListEntry[];
+  readonly markReadTargets: readonly {
+    readonly workspaceId: string;
+    readonly sessionId: string;
+  }[];
+  readonly allThreadsSort: AllThreadsSort;
+  readonly folderPreferencesByWorkspace?: Readonly<Record<string, FolderPreference>>;
 }
 
 export function buildThreadSidebarModel(
   state: DesktopAppState,
   nowMs: number = Date.now(),
 ): ThreadSidebarModel {
-  const entries = nestThreads(collectThreadEntries(state), state.childThreadLinks);
-  const pinnedThreads = entries
+  const allThreadsSort = state.allThreadsSort ?? "activity";
+  const entries = nestThreads(
+    sidebarOrder_dedupeBySession(collectThreadEntries(state)),
+    state.childThreadLinks,
+    allThreadsSort,
+  );
+  const roots = entries.filter((entry) => !entry.parentKey);
+  const pinnedThreads = roots
     .filter((entry) => !entry.session.archivedAt && Boolean(entry.session.pinnedAt))
     .sort((left, right) => comparePinnedThreads(left, right, state.pinnedSessionOrder));
-  const historyThreads = entries
+  const workspaceHistoryThreads = roots
     .filter((entry) => !entry.session.archivedAt && !entry.session.pinnedAt && !entry.parentKey)
     .sort((left, right) => compareByRecency(left.session, right.session));
-  const archivedThreads = entries
+  const activityHistoryThreads = sidebarOrder_dedupeBySessionId(
+    roots
+      .filter((entry) => !entry.session.archivedAt && !entry.session.pinnedAt && !entry.parentKey)
+      .sort((left, right) => sidebarOrder_compareThreads(left, right, "activity")),
+  );
+  const archivedThreads = roots
     .filter((entry) => Boolean(entry.session.archivedAt))
     .sort((left, right) => compareByRecency(left.session, right.session));
-  const recencyOrder = entries
-    .filter((entry) => !entry.session.archivedAt)
-    .sort((left, right) => compareByRecency(left.session, right.session));
-
+  const activeRoots = roots.filter((entry) => !entry.session.archivedAt);
+  const recencyOrder = flattenThreadTrees(activeRoots).sort((left, right) =>
+    compareByRecency(left.session, right.session),
+  );
+  const allThreadsRoots = sidebarOrder_sortThreads(
+    sidebarOrder_dedupeBySessionId(
+      roots.filter((entry) => !entry.session.archivedAt && !entry.session.pinnedAt),
+    ),
+    allThreadsSort,
+  );
+  const markReadEntries = sidebarOrder_dedupeBySessionId([
+    ...flattenThreadTrees(activeRoots),
+    ...flattenThreadTrees(archivedThreads),
+  ]);
+  const markReadTargets = sidebarPreferences_markReadTargets(markReadEntries);
   // Bucket each thread once, in recency order, instead of re-checking every thread per bucket.
   const bucketOf = recencyBucketer(nowMs);
   const historyByBucket = new Map<RecencyBucketId, ThreadListEntry[]>();
-  for (const entry of historyThreads) {
+  for (const entry of activityHistoryThreads) {
     const bucket = bucketOf(sessionLastInteractedAt(entry.session));
     const threads = historyByBucket.get(bucket);
     if (threads) {
@@ -102,7 +171,7 @@ export function buildThreadSidebarModel(
     folders,
     workspaceGroups: folders.map((workspace) => ({
       workspace,
-      threads: historyThreads.filter((entry) => entry.folderId === workspace.id),
+      threads: workspaceHistoryThreads.filter((entry) => entry.folderId === workspace.id),
     })),
     pinnedThreads,
     recencySections: RECENCY_BUCKET_ORDER.flatMap((bucket) => {
@@ -111,6 +180,10 @@ export function buildThreadSidebarModel(
     }),
     archivedThreads,
     recencyOrder,
+    allThreadsRoots,
+    markReadTargets,
+    allThreadsSort,
+    folderPreferencesByWorkspace: state.folderPreferencesByWorkspace,
   };
 }
 
@@ -122,10 +195,16 @@ export function buildThreadSidebarModel(
 function nestThreads(
   entries: readonly ThreadListEntry[],
   links: readonly ChildThreadLink[],
+  sort: NonNullable<DesktopAppState["allThreadsSort"]>,
 ): ThreadListEntry[] {
   const byKey = new Map(entries.map((entry) => [sessionThreadKey(entry), entry]));
-  const parentOf = new Map<string, string>();
+  const linkByChild = new Map<string, ChildThreadLink>();
   for (const link of links) {
+    const key = `${link.childWorkspaceId}:${link.childSessionId}`;
+    if (!linkByChild.has(key)) linkByChild.set(key, link);
+  }
+  const parentOf = new Map<string, string>();
+  for (const link of linkByChild.values()) {
     const key = `${link.childWorkspaceId}:${link.childSessionId}`;
     const parentKey = `${link.parentWorkspaceId}:${link.parentSessionId}`;
     const child = byKey.get(key);
@@ -152,16 +231,39 @@ function nestThreads(
     else childKeys.set(parentKey, [key]);
   }
   const built = new Map<string, ThreadListEntry>();
+  const originRank = (entry: ThreadListEntry): number => {
+    if (entry.childOriginGroup === "human") return 0;
+    if (entry.childOriginGroup === "tool") return 1;
+    if (entry.childOriginGroup === "scheduled") return 2;
+    return 3;
+  };
   const build = (key: string): ThreadListEntry => {
     const done = built.get(key);
     if (done) return done;
     const entry = byKey.get(key)!;
     const children = (childKeys.get(key) ?? [])
       .map(build)
-      .sort((left, right) => compareByRecency(left.session, right.session));
+      .sort(
+        (left, right) =>
+          originRank(left) - originRank(right) || sidebarOrder_compareThreads(left, right, sort),
+      );
     const parentKey = parentOf.get(key);
+    const link = linkByChild.get(key);
+    const descendantCount = children.reduce(
+      (total, child) => total + 1 + (child.descendantCount ?? 0),
+      0,
+    );
     const next: ThreadListEntry = {
       ...entry,
+      ...(link?.status ? { childStatus: link.status } : {}),
+      ...(link
+        ? {
+            childOriginGroup: sidebarPreferences_childOriginGroup(entry.session.initiatingOrigin),
+          }
+        : {}),
+      ...(link?.selectedConfig ? { childSelectedConfig: link.selectedConfig } : {}),
+      ...(link?.createdAt ? { childCreatedAt: link.createdAt } : {}),
+      ...(descendantCount ? { descendantCount } : {}),
       ...(parentKey ? { parentKey } : {}),
       ...(children.length ? { children } : {}),
     };
@@ -297,31 +399,45 @@ export interface VisibleThreadShortcutOptions {
   /** Folder groups folded shut in the sidebar; their rows are not on screen. */
   readonly collapsedWorkspaceIds?: readonly string[];
   readonly collapsedThreadKeys?: ReadonlySet<string>;
+  readonly folderPreferencesByWorkspace?: Readonly<Record<string, FolderPreference>>;
+  readonly revealKeys?: ReadonlySet<string>;
 }
 
 export function visibleThreadShortcutOrder(
   options: VisibleThreadShortcutOptions,
 ): readonly ThreadListEntry[] {
   const expandedHistory = options.expandedHistory ?? EMPTY_EXPANDED_HISTORY;
-  const collapsedWorkspaceIds = new Set(options.collapsedWorkspaceIds ?? []);
+  const collapsedWorkspaceIds = options.collapsedWorkspaceIds ?? [];
   const unpinned =
     options.grouping === "workspace"
-      ? options.model.workspaceGroups
-          .filter((group) => !collapsedWorkspaceIds.has(group.workspace.id))
-          .flatMap(
-            (group) =>
+      ? options.model.workspaceGroups.flatMap((group) => {
+          const expanded = expandedHistory.has(workspaceHistoryExpansionKey(group.workspace.id));
+          const preference = sidebarPreferences_folderState(
+            group.workspace.id,
+            options.folderPreferencesByWorkspace ?? options.model.folderPreferencesByWorkspace,
+            collapsedWorkspaceIds,
+          );
+          return sidebarPreferences_previewTree(
+            group.threads,
+            preference,
+            options.revealKeys,
+            expanded,
+          ).visible;
+        })
+      : options.model.allThreadsSort === "activity"
+        ? options.model.recencySections.flatMap(
+            (section) =>
               threadHistoryPreview(
-                group.threads,
-                expandedHistory.has(workspaceHistoryExpansionKey(group.workspace.id)),
+                section.threads,
+                expandedHistory.has(recencyHistoryExpansionKey(section.bucket)),
               ).visible,
           )
-      : options.model.recencySections.flatMap(
-          (section) =>
-            threadHistoryPreview(
-              section.threads,
-              expandedHistory.has(recencyHistoryExpansionKey(section.bucket)),
-            ).visible,
-        );
+        : sidebarPreferences_previewTree(
+            options.model.allThreadsRoots,
+            "partial",
+            options.revealKeys,
+            expandedHistory.has("all-threads"),
+          ).visible;
   return flattenThreadTrees(
     [
       ...options.model.pinnedThreads,

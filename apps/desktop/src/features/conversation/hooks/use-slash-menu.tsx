@@ -79,7 +79,12 @@ interface UseSlashMenuParams {
   readonly allowTreeCommand?: boolean;
   readonly immediateCommandMode?: "submit" | "prefill";
   readonly onRunTreeCommand?: () => void;
-  readonly onSelectModelOption?: (provider: string, modelId: string) => void;
+  /** True defers cleanup for confirmation; false/current or legacy void performs normal cleanup. */
+  readonly onSelectModelOption?: (
+    provider: string,
+    modelId: string,
+    source?: "slash-menu",
+  ) => boolean | void;
   readonly onSelectThinkingOption?: (level: string) => void;
   readonly onSelectLoginProvider?: (providerId: string) => void;
   readonly onSelectLogoutProvider?: (providerId: string) => void;
@@ -342,24 +347,15 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
       if (!providerId) {
         return;
       }
-      resetSlashUi();
-      setComposerDraft("");
       if (onSelectModelOption) {
-        onSelectModelOption(providerId, option.value);
-        return;
+        // Keep the slash text and intent while confirmation is pending. The thread-bound
+        // controller clears /model only after confirmation; Cancel leaves the draft intact.
+        const pending = onSelectModelOption(providerId, option.value, "slash-menu");
+        if (pending !== true) {
+          resetSlashUi();
+          setComposerDraft("");
+        }
       }
-      if (!selectedWorkspace || !selectedSession || !api) {
-        return;
-      }
-      const target = { workspaceId: selectedWorkspace.id, sessionId: selectedSession.id };
-      // The pick consumed the command text: save the cleared draft now rather than after the
-      // debounce, so quitting right away cannot bring "/model" back.
-      void updateSnapshot(setSnapshot, async () => {
-        await api.updateComposerDraft("", target);
-        return api.setSessionModel(target.workspaceId, target.sessionId, providerId, option.value);
-      }).catch((error: unknown) => {
-        console.error("[renderer] updateSnapshot failed", error);
-      });
       return;
     }
 
