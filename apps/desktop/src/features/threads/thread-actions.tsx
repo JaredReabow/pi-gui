@@ -1,11 +1,13 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { SessionRecord } from "../../../contracts/desktop-state";
 import { formatShortcut } from "../../../contracts/ipc";
+import { trapDialogFocus } from "../../ui/dialog-focus";
 import {
   ArchiveIcon,
   CheckIcon,
   ClockIcon,
   CopyIcon,
+  ForkIcon,
   PencilIcon,
   PinIcon,
   RestoreIcon,
@@ -18,6 +20,8 @@ import {
  */
 export type ThreadActionId =
   | "rename-thread"
+  | "branch-same-project"
+  | "branch-existing-project"
   | "pin-thread"
   | "archive-thread"
   | "restore-thread"
@@ -43,6 +47,8 @@ export interface ThreadActionHandlers {
   readonly platform: NodeJS.Platform;
   readonly hasScheduledTask: (subject: ThreadActionSubject) => boolean;
   readonly startRename: (subject: ThreadActionSubject) => void;
+  readonly branchSameProject: (subject: ThreadActionSubject) => void;
+  readonly chooseBranchProject: (subject: ThreadActionSubject) => void;
   readonly setPinned: (subject: ThreadActionSubject, pinned: boolean) => void;
   readonly archive: (subject: ThreadActionSubject) => void;
   readonly restore: (subject: ThreadActionSubject) => void;
@@ -73,6 +79,18 @@ export function buildThreadActions(
       icon: <PencilIcon />,
       hint: renameThreadShortcut(handlers.platform),
       run: () => handlers.startRename(subject),
+    },
+    {
+      id: "branch-same-project",
+      title: "Branch in same project",
+      icon: <ForkIcon />,
+      run: () => handlers.branchSameProject(subject),
+    },
+    {
+      id: "branch-existing-project",
+      title: "Branch into existing project…",
+      icon: <ForkIcon />,
+      run: () => handlers.chooseBranchProject(subject),
     },
   ];
   if (archived) {
@@ -152,6 +170,152 @@ export function ThreadActionsMenu({ actions, className }: ThreadActionsMenuProps
           ) : null}
         </button>
       ))}
+    </div>
+  );
+}
+
+export interface BranchProjectOption {
+  readonly workspaceId: string;
+  readonly name: string;
+  readonly path: string;
+  readonly isWorktree: boolean;
+}
+
+export interface BranchProjectPickerState {
+  readonly sourceTitle: string;
+  readonly projects: readonly BranchProjectOption[];
+  readonly submittingWorkspaceId?: string;
+  readonly error?: string;
+}
+
+interface BranchProjectPickerProps {
+  readonly state: BranchProjectPickerState;
+  readonly onClose: () => void;
+  readonly onSelect: (workspaceId: string) => void;
+}
+
+export function BranchProjectPicker({ state, onClose, onSelect }: BranchProjectPickerProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const submitting = state.submittingWorkspaceId !== undefined;
+
+  useEffect(() => {
+    dialogRef.current
+      ?.querySelector<HTMLButtonElement>("[data-branch-project]:not(:disabled)")
+      ?.focus();
+  }, []);
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      trapDialogFocus(event, dialogRef.current);
+      return;
+    }
+    if (event.key === "Escape" && !submitting) {
+      event.preventDefault();
+      onClose();
+    }
+  };
+
+  return (
+    <div
+      className="tree-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div
+        aria-label="Branch into existing project"
+        aria-modal="true"
+        className="tree-modal tree-modal--compact"
+        data-testid="branch-project-picker"
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+      >
+        <div className="tree-modal__header">
+          <div>
+            <div className="tree-modal__eyebrow">Branch conversation</div>
+            <h2 className="tree-modal__title">Choose a project</h2>
+          </div>
+          <button
+            aria-label="Close project picker"
+            className="tree-modal__close"
+            disabled={submitting}
+            type="button"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+
+        {state.error ? (
+          <div className="tree-modal__error error-banner" data-testid="branch-project-error">
+            {state.error}
+          </div>
+        ) : null}
+
+        <div className="tree-modal__summary-step">
+          <div className="tree-modal__summary-copy">
+            Copy “{state.sourceTitle}” and its current conversation into another project. The
+            original thread remains unchanged.
+          </div>
+          {state.projects.length > 0 ? (
+            <div
+              aria-label="Projects"
+              className="tree-modal__list branch-project-picker__list"
+              data-testid="branch-project-options"
+              role="listbox"
+            >
+              {state.projects.map((project) => {
+                const projectSubmitting = state.submittingWorkspaceId === project.workspaceId;
+                return (
+                  <button
+                    key={project.workspaceId}
+                    aria-label={`Branch into ${project.name}`}
+                    className="tree-modal__node branch-project-picker__option"
+                    data-branch-project="true"
+                    data-workspace-id={project.workspaceId}
+                    disabled={submitting}
+                    aria-selected="false"
+                    role="option"
+                    type="button"
+                    onClick={() => onSelect(project.workspaceId)}
+                  >
+                    <span className="branch-project-picker__name">
+                      {project.name}
+                      {project.isWorktree ? " · Worktree" : ""}
+                    </span>
+                    <span className="branch-project-picker__path">{project.path}</span>
+                    <span className="branch-project-picker__action">
+                      {projectSubmitting ? "Branching…" : "Branch here"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="tree-modal__empty" data-testid="branch-project-empty">
+              Open another project folder before branching this thread.
+            </div>
+          )}
+
+          <div className="tree-modal__footer">
+            <div className="tree-modal__hint">
+              The selected project becomes the active thread after the branch is created.
+            </div>
+            <div className="tree-modal__actions">
+              <button
+                className="button button--secondary"
+                disabled={submitting}
+                type="button"
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

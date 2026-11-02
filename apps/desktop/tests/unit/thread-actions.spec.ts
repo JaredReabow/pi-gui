@@ -30,6 +30,8 @@ function handlers(
     platform,
     hasScheduledTask: () => scheduled,
     startRename: record("rename"),
+    branchSameProject: record("branch-same"),
+    chooseBranchProject: record("branch-existing"),
     setPinned: (_subject, pinned) => calls.push(`pin:${pinned}`),
     archive: record("archive"),
     restore: record("restore"),
@@ -47,6 +49,8 @@ test("an open thread lists rename, pin, archive, scheduled task and copy with sh
   const actions = buildThreadActions({ workspaceId: "ws", session: session() }, handlers("darwin"));
   expect(titles(actions)).toEqual([
     "Rename thread",
+    "Branch in same project",
+    "Branch into existing project…",
     "Pin thread",
     "Archive thread",
     "Add scheduled task…",
@@ -66,6 +70,8 @@ test("state changes the list: pinned, unseen, scheduled and archived threads", (
   );
   expect(titles(actions)).toEqual([
     "Rename thread",
+    "Branch in same project",
+    "Branch into existing project…",
     "Unpin thread",
     "Archive thread",
     "Mark as read",
@@ -81,6 +87,8 @@ test("state changes the list: pinned, unseen, scheduled and archived threads", (
   );
   expect(titles(archived)).toEqual([
     "Rename thread",
+    "Branch in same project",
+    "Branch into existing project…",
     "Restore thread",
     "Add scheduled task…",
     "Copy session ID",

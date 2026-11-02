@@ -866,9 +866,12 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     const position = options.position ?? "before";
     let targetLeafId: string | undefined;
     let selectedText: string | undefined;
-    if (position === "after") {
-      const selectedIndex = branch.findIndex((entry) => entry.id === selectedEntry.id);
-      if (selectedEntry.message.role === "assistant") {
+    if (position === "head") {
+      targetLeafId = branch[branch.length - 1]?.id;
+    } else if (position === "after") {
+      const selected = selectedEntry!;
+      const selectedIndex = branch.findIndex((entry) => entry.id === selected.id);
+      if (selected.message.role === "assistant") {
         // Assistant entries can be followed by tool-result entries that belong
         // to the same visible response. Include those, but stop before the next
         // assistant/user message so forking an earlier response does not keep a
@@ -881,8 +884,8 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
         );
         targetLeafId =
           nextMessageIndex > selectedIndex
-            ? (branch[nextMessageIndex - 1]?.id ?? selectedEntry.id)
-            : (branch[branch.length - 1]?.id ?? selectedEntry.id);
+            ? (branch[nextMessageIndex - 1]?.id ?? selected.id)
+            : (branch[branch.length - 1]?.id ?? selected.id);
       } else {
         const nextUserIndex = branch.findIndex(
           (entry, index) =>
@@ -890,15 +893,15 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
         );
         targetLeafId =
           nextUserIndex > selectedIndex
-            ? (branch[nextUserIndex - 1]?.id ?? selectedEntry.id)
-            : (branch[branch.length - 1]?.id ?? selectedEntry.id);
+            ? (branch[nextUserIndex - 1]?.id ?? selected.id)
+            : (branch[branch.length - 1]?.id ?? selected.id);
       }
     } else if (position === "at") {
-      targetLeafId = selectedEntry.id;
+      targetLeafId = selectedEntry!.id;
     } else {
-      targetLeafId = selectedEntry.parentId ?? undefined;
+      targetLeafId = selectedEntry!.parentId ?? undefined;
       selectedText =
-        messageText(selectedEntry.message as unknown as Record<string, unknown>) || undefined;
+        messageText(selectedEntry!.message as unknown as Record<string, unknown>) || undefined;
     }
 
     const targetWorkspace = options.targetWorkspace;
@@ -991,7 +994,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     readonly sourceRecord: ManagedSessionRecord;
     readonly sourceFile: string;
     readonly branch: readonly SessionBranchEntry[];
-    readonly selectedEntry: SessionMessageBranchEntry;
+    readonly selectedEntry: SessionMessageBranchEntry | undefined;
   }> {
     const sourceRecord = await this.ensureRecord(sourceRef);
     const sourceSession = this.requireSession(sourceRecord);
@@ -1004,12 +1007,11 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     }
 
     const branch = sourceManager.getBranch();
-    const selectedEntry = resolveForkSourceEntry(
-      branch,
-      displayMessagesFromSession(sourceManager),
-      options,
-    );
-    if (!selectedEntry) {
+    const selectedEntry =
+      options.position === "head"
+        ? undefined
+        : resolveForkSourceEntry(branch, displayMessagesFromSession(sourceManager), options);
+    if (options.position !== "head" && !selectedEntry) {
       const selector =
         options.sourceMessageId !== undefined
           ? `message ${options.sourceMessageId}`

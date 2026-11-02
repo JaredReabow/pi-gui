@@ -129,10 +129,25 @@ test("IPC request validation checks discriminated command records", () => {
       sourceSessionId: "session-a",
       rootWorkspaceId: "workspace-a",
       environment: "local",
+      targetWorkspaceId: "workspace-b",
       position: "after",
       sourceMessageIndex: 3,
     }),
-  ).toMatchObject({ environment: "local", position: "after", sourceMessageIndex: 3 });
+  ).toMatchObject({
+    environment: "local",
+    targetWorkspaceId: "workspace-b",
+    position: "after",
+    sourceMessageIndex: 3,
+  });
+  expect(
+    expectForkThreadInput({
+      sourceWorkspaceId: "workspace-a",
+      sourceSessionId: "session-a",
+      rootWorkspaceId: "workspace-a",
+      environment: "local",
+      position: "head",
+    }),
+  ).toMatchObject({ environment: "local", position: "head" });
   expect(() =>
     expectForkThreadInput({
       sourceWorkspaceId: "workspace-a",

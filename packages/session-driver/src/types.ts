@@ -166,7 +166,7 @@ export interface CreateSessionOptions {
 /** Extension flag values by flag name, as `pi --name` (boolean) or `pi --name value` (string). */
 export type ExtensionFlagValues = Readonly<Record<string, boolean | string>>;
 
-export type ForkPosition = "before" | "at" | "after";
+export type ForkPosition = "before" | "at" | "after" | "head";
 
 export interface ForkSessionOptions {
   /** Target workspace for the forked session (the source workspace, or a new worktree). */
@@ -179,7 +179,8 @@ export interface ForkSessionOptions {
   readonly userMessageIndex?: number;
   /**
    * "before" (default) forks before the selected user message so it can be edited and
-   * re-sent; "at" keeps the selected user message in the forked history.
+   * re-sent; "at" keeps the selected user message in the forked history; "head"
+   * copies everything through the source session's current branch head.
    */
   readonly position?: ForkPosition;
   /** Optional title for the forked session. Defaults to the source session title. */

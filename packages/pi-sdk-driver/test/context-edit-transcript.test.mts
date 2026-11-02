@@ -96,6 +96,21 @@ await test("model context edits preserve original desktop history and fork targe
     targetWorkspace: workspace,
     userMessageIndex: 0,
   });
+  await supervisor.validateForkSession(snapshot.ref, {
+    targetWorkspace: workspace,
+    position: "head",
+  });
+  const headFork = await supervisor.forkSession(snapshot.ref, {
+    targetWorkspace: workspace,
+    position: "head",
+  });
+  assert.deepEqual(
+    (await supervisor.getTranscript(headFork.snapshot.ref))
+      .filter((item) => item.kind === "message")
+      .map((item) => ({ id: item.id, text: item.text })),
+    expected,
+  );
+  await supervisor.closeSession(headFork.snapshot.ref);
   const fork = await supervisor.forkSession(snapshot.ref, {
     targetWorkspace: workspace,
     sourceMessageId: answerId,

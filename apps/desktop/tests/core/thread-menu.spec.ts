@@ -86,6 +86,8 @@ test("right-click thread menu supports rename, archive/restore, mark read, and c
     const menu = row.getByRole("menu");
     expect(await menuItemTitles(menu)).toEqual([
       "Rename thread",
+      "Branch in same project",
+      "Branch into existing project…",
       "Pin thread",
       "Archive thread",
       "Mark as read",

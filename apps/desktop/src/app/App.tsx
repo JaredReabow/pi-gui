@@ -79,6 +79,7 @@ import { useThreadSearch } from "../features/conversation/hooks/use-thread-searc
 import { useWorkspaceMenu } from "../features/threads/hooks/use-workspace-menu";
 import { useThreadActions } from "../features/threads/hooks/use-thread-actions";
 import { ChatHeaderActions } from "../features/threads/chat-header-actions";
+import { BranchProjectPicker } from "../features/threads/thread-actions";
 import { useNewThreadController } from "../features/threads/hooks/use-new-thread-controller";
 import {
   buildExtensionDockModel,
@@ -611,9 +612,11 @@ export default function App() {
     setSnapshot,
     updateSnapshot,
     scheduledTasks: snapshot?.scheduledTasks ?? [],
+    workspaces: snapshot?.workspaces ?? [],
     sidebarCollapsed: snapshot?.sidebarCollapsed ?? false,
     openScheduledEditor: setScheduledEditor,
     flushComposerDraft,
+    focusComposer,
   });
 
   const newThread = useNewThreadController({
@@ -1448,6 +1451,13 @@ export default function App() {
         ) : null}
       </main>
       <SidebarDrawerBackdrop drawer={sidebarDrawer} />
+      {threadMenu.branchProjectPicker ? (
+        <BranchProjectPicker
+          state={threadMenu.branchProjectPicker}
+          onClose={threadMenu.closeBranchProjectPicker}
+          onSelect={threadMenu.selectBranchProject}
+        />
+      ) : null}
       {scheduledEditor ? (
         <ScheduledTaskEditor
           editor={scheduledEditor}

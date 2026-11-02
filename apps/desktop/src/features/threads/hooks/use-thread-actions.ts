@@ -6,7 +6,12 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
-import type { DesktopAppState, WorkspaceSessionTarget } from "../../../../contracts/desktop-state";
+import type {
+  DesktopAppState,
+  ForkThreadInput,
+  WorkspaceRecord,
+  WorkspaceSessionTarget,
+} from "../../../../contracts/desktop-state";
 import type { PiDesktopApi } from "../../../../contracts/ipc";
 import {
   nonCompletedBindingForSession,
@@ -15,6 +20,7 @@ import {
 import type { ScheduledEditorState } from "../../scheduled-tasks/scheduled-task-editor";
 import {
   buildThreadActions,
+  type BranchProjectPickerState,
   type ThreadAction,
   type ThreadActionHandlers,
   type ThreadActionSubject,
@@ -28,10 +34,12 @@ interface UseThreadActionsParams {
     action: () => Promise<DesktopAppState>,
   ) => Promise<DesktopAppState>;
   readonly scheduledTasks: readonly ScheduledTaskRecord[];
+  readonly workspaces: readonly WorkspaceRecord[];
   readonly sidebarCollapsed: boolean;
   readonly openScheduledEditor: (editor: ScheduledEditorState) => void;
   /** Sends the open thread's debounced draft now, before an action can deselect that thread. */
   readonly flushComposerDraft: () => void;
+  readonly focusComposer: () => void;
 }
 
 /** Where a thread menu is open: a sidebar row's right-click menu, or the thread header. */
@@ -50,6 +58,9 @@ export interface ThreadMenuState {
   readonly toggleHeaderMenu: () => void;
   readonly submitRename: (subject: ThreadActionSubject) => void;
   readonly cancelRename: () => void;
+  readonly branchProjectPicker: BranchProjectPickerState | null;
+  readonly closeBranchProjectPicker: () => void;
+  readonly selectBranchProject: (workspaceId: string) => void;
   /**
    * The shared action list every thread menu, shortcut and the command palette
    * use. Running an action closes any open thread menu first.
@@ -65,13 +76,19 @@ export function useThreadActions({
   setSnapshot,
   updateSnapshot,
   scheduledTasks,
+  workspaces,
   sidebarCollapsed,
   openScheduledEditor,
   flushComposerDraft,
+  focusComposer,
 }: UseThreadActionsParams): ThreadMenuState {
   const [openMenu, setOpenMenu] = useState<OpenThreadMenu | null>(null);
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [branchPicker, setBranchPicker] = useState<{
+    readonly subject: ThreadActionSubject;
+    readonly state: BranchProjectPickerState;
+  } | null>(null);
   const menuWrapRef = useRef<HTMLDivElement | null>(null);
   const renamePanelRef = useRef<HTMLFormElement | null>(null);
 
@@ -117,6 +134,40 @@ export function useThreadActions({
     mutate((desktopApi) => desktopApi.unarchiveSession(target));
   const setPinned = (target: WorkspaceSessionTarget, pinned: boolean) =>
     mutate((desktopApi) => desktopApi.setSessionPinned(target, pinned));
+  const branchThread = async (
+    subject: ThreadActionSubject,
+    targetWorkspaceId?: string,
+  ): Promise<DesktopAppState> => {
+    if (!api) throw new Error("Desktop API is unavailable");
+    flushComposerDraft();
+    const target = targetWorkspaceId
+      ? workspaces.find((workspace) => workspace.id === targetWorkspaceId)
+      : workspaces.find((workspace) => workspace.id === subject.workspaceId);
+    if (!target) throw new Error(`Unknown workspace: ${targetWorkspaceId}`);
+    const input: ForkThreadInput = {
+      sourceWorkspaceId: subject.workspaceId,
+      sourceSessionId: subject.session.id,
+      rootWorkspaceId: target.rootWorkspaceId ?? target.id,
+      environment: "local",
+      ...(targetWorkspaceId ? { targetWorkspaceId } : {}),
+      position: "head",
+    };
+    const state = await updateSnapshot(setSnapshot, () => api.forkThread(input));
+    focusComposer();
+    return state;
+  };
+  const branchProjectOptions = (subject: ThreadActionSubject) =>
+    workspaces
+      .filter((workspace) => workspace.id !== subject.workspaceId)
+      .map((workspace) => ({
+        workspaceId: workspace.id,
+        name: workspace.name,
+        path: workspace.path,
+        isWorktree: workspace.rootWorkspaceId !== undefined,
+      }))
+      .sort(
+        (left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path),
+      );
 
   const platform = api?.platform ?? "linux";
   const handlers: ThreadActionHandlers = {
@@ -128,6 +179,20 @@ export function useThreadActions({
       if (sidebarCollapsed) mutate((desktopApi) => desktopApi.setSidebarCollapsed(false));
       setRenameSessionId(subject.session.id);
       setRenameDraft(subject.session.title);
+    },
+    branchSameProject: (subject) => {
+      void branchThread(subject).catch((error: unknown) => {
+        console.error("[renderer] branchThread failed", error);
+      });
+    },
+    chooseBranchProject: (subject) => {
+      setBranchPicker({
+        subject,
+        state: {
+          sourceTitle: subject.session.title,
+          projects: branchProjectOptions(subject),
+        },
+      });
     },
     setPinned: (subject, pinned) => setPinned(targetFor(subject), pinned),
     archive: (subject) => archive(targetFor(subject)),
@@ -183,6 +248,42 @@ export function useThreadActions({
     cancelRename: () => {
       setRenameSessionId(null);
       setRenameDraft("");
+    },
+    branchProjectPicker: branchPicker?.state ?? null,
+    closeBranchProjectPicker: () => {
+      setBranchPicker((current) => (current?.state.submittingWorkspaceId ? current : null));
+    },
+    selectBranchProject: (workspaceId) => {
+      if (!branchPicker || branchPicker.state.submittingWorkspaceId) return;
+      setBranchPicker((current) =>
+        current
+          ? {
+              ...current,
+              state: {
+                ...current.state,
+                submittingWorkspaceId: workspaceId,
+                error: undefined,
+              },
+            }
+          : current,
+      );
+      void branchThread(branchPicker.subject, workspaceId)
+        .then(() => setBranchPicker(null))
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setBranchPicker((current) =>
+            current
+              ? {
+                  ...current,
+                  state: {
+                    ...current.state,
+                    submittingWorkspaceId: undefined,
+                    error: message,
+                  },
+                }
+              : current,
+          );
+        });
     },
     actionsFor: (subject) =>
       buildThreadActions(subject, handlers).map((action) => ({

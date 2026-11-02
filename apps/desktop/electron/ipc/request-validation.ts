@@ -278,15 +278,20 @@ export function expectForkThreadInput(value: unknown): ForkThreadInput {
     position !== undefined &&
     position !== "before" &&
     position !== "at" &&
-    position !== "after"
+    position !== "after" &&
+    position !== "head"
   ) {
-    throw new TypeError("input.position must be before, at, or after");
+    throw new TypeError("input.position must be before, at, after, or head");
   }
   return {
     sourceWorkspaceId: expectNonEmptyString(record.sourceWorkspaceId, "input.sourceWorkspaceId"),
     sourceSessionId: expectNonEmptyString(record.sourceSessionId, "input.sourceSessionId"),
     rootWorkspaceId: expectNonEmptyString(record.rootWorkspaceId, "input.rootWorkspaceId"),
     environment,
+    targetWorkspaceId: expectOptionalNonEmptyString(
+      record.targetWorkspaceId,
+      "input.targetWorkspaceId",
+    ),
     sourceMessageId: expectOptionalNonEmptyString(record.sourceMessageId, "input.sourceMessageId"),
     sourceMessageIndex: expectOptionalNonNegativeInteger(
       record.sourceMessageIndex,

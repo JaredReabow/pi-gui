@@ -231,6 +231,13 @@ export async function forkThread(
   }
 
   return store.withErrorHandling(async () => {
+    const localTargetWorkspace =
+      input.environment === "local"
+        ? store.workspaceRefFromState(input.targetWorkspaceId ?? input.sourceWorkspaceId)
+        : sourceWorkspace;
+    if (!localTargetWorkspace) {
+      return store.withError(`Unknown workspace: ${input.targetWorkspaceId}`);
+    }
     const sourceRef = { workspaceId: input.sourceWorkspaceId, sessionId: input.sourceSessionId };
     const forkOptions = {
       ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
@@ -241,11 +248,11 @@ export async function forkThread(
       ...(input.position ? { position: input.position } : {}),
     };
     await store.driver.validateForkSession(sourceRef, {
-      targetWorkspace: sourceWorkspace,
+      targetWorkspace: localTargetWorkspace,
       ...forkOptions,
     });
 
-    let targetWorkspace = sourceWorkspace;
+    let targetWorkspace = localTargetWorkspace;
     let rollbackWorktree: (() => Promise<void>) | undefined;
     if (input.environment === "worktree") {
       const rootWorkspace = store.workspaceRefFromState(input.rootWorkspaceId);

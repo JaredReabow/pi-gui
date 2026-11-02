@@ -23,6 +23,9 @@
 
 - Added persistent per-project colours, muted inactive projects, separate rounded inactive
   thread rows, and perimeter colour only for the active project.
+- Added thread context-menu branching. A thread can be copied at its current conversation
+  head into the same project or into another project chosen from the live workspace list.
+  The original thread remains unchanged and the new branch opens empty for continued work.
 - Restored the project-coloured window perimeter and active-project seam bridge in maintained
   source, aligned the pane corners with the native window curve, and kept the full title strip
   draggable.

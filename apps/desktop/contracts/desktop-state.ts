@@ -473,15 +473,17 @@ export type StartThreadInput = {
   readonly extensionFlags?: ExtensionFlagValues;
 };
 
-export type ForkThreadPosition = "before" | "at" | "after";
+export type ForkThreadPosition = "before" | "at" | "after" | "head";
 
 export type ForkThreadInput = {
   readonly sourceWorkspaceId: string;
   readonly sourceSessionId: string;
   /** Root workspace used as the base when forking into a new worktree. */
   readonly rootWorkspaceId: string;
-  /** "local" forks into the source workspace; "worktree" creates a new worktree. */
+  /** "local" forks into the source or selected target workspace; "worktree" creates one. */
   readonly environment: NewThreadEnvironment;
+  /** Local target project; omitted to branch into the source workspace. */
+  readonly targetWorkspaceId?: string;
   /** ID of the rendered transcript message selected as the fork point, when it maps to a session entry. */
   readonly sourceMessageId?: string;
   /** 0-based index of the rendered transcript message selected as the fork point. */
