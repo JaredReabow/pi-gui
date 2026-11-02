@@ -15,6 +15,8 @@
 - Collapsed adjacent successfully completed tool calls into one summary row that reports the
   action count and tool mix, with controls to restore the original rows. Running tools,
   failures and image results remain visible while collapsed.
+- Kept the pinned turn-prompt rail mounted across timeline gaps and compacted tool groups, so
+  it no longer flickers when the transcript is following the newest messages.
 - Added the selectable running indicator styles, with the moonwalk pair as the default.
 
 ### Sidebar and navigation

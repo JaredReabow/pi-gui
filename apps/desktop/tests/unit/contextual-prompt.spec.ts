@@ -4,6 +4,7 @@ import {
   resolveContextualPrompt,
   type ContextualPrompt,
 } from "../../src/features/conversation/contextual-prompt-model";
+import { createToolGroup } from "../../src/features/conversation/timeline-tool-groups";
 import { formatAnnotatedPrompt } from "../../src/features/conversation/annotations/annotation-prompt";
 
 const createdAt = "2026-10-31T00:00:00.000Z";
@@ -122,6 +123,37 @@ test("offscreen overscan rows and inserted turn markers do not select the previo
   const rows = [row(transcript[1]!, 0), row(marker, 120), row(transcript[3]!, 160)];
 
   expect(resolveContextualPrompt(transcript, rows, 120)?.id).toBe("user-2");
+});
+
+test("a compacted tool group resolves to the prompt owning its original tool calls", () => {
+  const first = tool("tool-1");
+  const second = tool("tool-2");
+  const transcript = [
+    message("user-1", "user", "Grouped work"),
+    message("assistant-1", "assistant", "Starting"),
+    first,
+    second,
+    message("assistant-2", "assistant", "Finished"),
+  ];
+  const group = createToolGroup([first, second]);
+
+  expect(resolveContextualPrompt(transcript, [row(group, 200)], 200)?.id).toBe("user-1");
+  expect(resolveContextualPrompt(transcript, [row(group, 200)], 275)?.id).toBe("user-1");
+});
+
+test("the viewport prompt remains stable while the top edge crosses a timeline gap", () => {
+  const transcript = [
+    message("user-1", "user", "Stable prompt"),
+    message("assistant-1", "assistant", "Answer"),
+    message("user-2", "user", "Later prompt"),
+  ];
+  const rows = [row(transcript[1]!, 0), row(transcript[2]!, 120)];
+
+  expect(
+    [79, 80, 81, 100, 119].map(
+      (viewportTop) => resolveContextualPrompt(transcript, rows, viewportTop)?.id,
+    ),
+  ).toEqual(["user-1", "user-1", "user-1", "user-1", "user-1"]);
 });
 
 test("missing rows and positions before the first human return no invented prompt", () => {

@@ -1,5 +1,8 @@
 import type { SessionTranscriptMessage } from "@pi-gui/session-driver";
-import type { TimelineTranscriptItem } from "../../../contracts/timeline-types";
+import type {
+  DisplayTimelineItem,
+  TimelineTranscriptItem,
+} from "../../../contracts/timeline-types";
 import { parseCrossProjectMessage } from "../../../contracts/thread-message";
 import type { TimelineRow } from "./timeline-layout";
 import { parseAnnotatedPrompt } from "./annotations/annotation-prompt";
@@ -13,7 +16,7 @@ export interface ContextualPrompt {
 }
 
 interface ContextualPromptRow {
-  readonly item: { readonly id: string };
+  readonly item: DisplayTimelineItem;
   readonly top: number;
   readonly height?: number;
 }
@@ -32,7 +35,7 @@ function sourceMessageId(item: TimelineTranscriptItem): string | undefined {
  */
 function visibleRowAt(rows: readonly ContextualPromptRow[], viewportTop: number) {
   const hasGeometry = rows.some((row) => row.height !== undefined);
-  return rows
+  const intersecting = rows
     .filter((row) =>
       row.height === undefined
         ? row.top <= viewportTop + 0.5
@@ -40,6 +43,35 @@ function visibleRowAt(rows: readonly ContextualPromptRow[], viewportTop: number)
     )
     .sort((a, b) => a.top - b.top)
     .at(-1);
+  if (intersecting) return intersecting;
+
+  // Timeline rows have visual gaps. Keep the prompt owned by the row immediately
+  // above a gap instead of unmounting the rail while the viewport sits between rows.
+  const preceding = rows
+    .filter((row) => row.top <= viewportTop + 0.5)
+    .sort((a, b) => b.top - a.top)
+    .at(0);
+  if (preceding) return preceding;
+
+  return [...rows].sort((a, b) => a.top - b.top).at(0);
+}
+
+function transcriptIndexForItem(
+  transcript: readonly TimelineTranscriptItem[],
+  item: DisplayTimelineItem,
+): number {
+  const direct = transcript.findIndex(
+    (entry) => entry.id === item.id || sourceMessageId(entry) === item.id,
+  );
+  if (direct >= 0) return direct;
+  if (item.kind !== "tool-group") return -1;
+
+  const indices = item.items
+    .map((tool) =>
+      transcript.findIndex((entry) => entry.id === tool.id || sourceMessageId(entry) === tool.id),
+    )
+    .filter((index) => index >= 0);
+  return indices.length > 0 ? Math.min(...indices) : -1;
 }
 
 function transcriptIndexForVisibleRow(
@@ -47,9 +79,7 @@ function transcriptIndexForVisibleRow(
   rows: readonly ContextualPromptRow[],
   visible: ContextualPromptRow,
 ): number {
-  const direct = transcript.findIndex(
-    (item) => item.id === visible.item.id || sourceMessageId(item) === visible.item.id,
-  );
+  const direct = transcriptIndexForItem(transcript, visible.item);
   if (direct >= 0) return direct;
 
   if (visible.item.id === "working-indicator") return transcript.length - 1;
@@ -63,9 +93,7 @@ function transcriptIndexForVisibleRow(
   const visibleTop = visible.top;
   const preceding = rows.filter((row) => row.top <= visibleTop).sort((a, b) => b.top - a.top);
   for (const row of preceding) {
-    const index = transcript.findIndex(
-      (item) => item.id === row.item.id || sourceMessageId(item) === row.item.id,
-    );
+    const index = transcriptIndexForItem(transcript, row.item);
     if (index >= 0) return index;
   }
   return -1;
