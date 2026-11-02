@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import type { CreateSessionOptions } from "@pi-gui/session-driver";
+import type { CreateSessionOptions, InlineWorkerModelSelection } from "@pi-gui/session-driver";
 import type {
   ChildModelSelection,
   EffectiveChildModelSettings,
@@ -156,6 +156,14 @@ test("registered create_child_thread exposes and forwards only the strict select
         },
       };
     },
+    runWorker: async () => ({
+      content: [{ type: "text", text: "worker" }],
+      details: { action: "pi_gui_spawn_worker", prompt: "" },
+    }),
+    listModels: async () => ({
+      content: [{ type: "text", text: "models" }],
+      details: { action: "pi_gui_list_models", models: [] },
+    }),
     listThreads: async () => ({
       content: [{ type: "text", text: "list" }],
       details: { action: "pi_gui_list_threads" },
@@ -230,6 +238,120 @@ test("registered create_child_thread exposes and forwards only the strict select
     ),
   ).rejects.toThrow(/Invalid child model selection/);
   expect(received).toBeUndefined();
+});
+
+test("spawn_worker and list_models are registered and use the exact live-model contract", async () => {
+  let received:
+    | {
+        readonly prompt: string;
+        readonly toolCallId: string;
+        readonly selection?: ChildModelSelection;
+        readonly signal?: AbortSignal;
+      }
+    | undefined;
+  let modelReads = 0;
+  const bridge: OrchestrationRuntimeBridge = {
+    archiveChildThreads: async () => ({
+      content: [{ type: "text", text: "archive" }],
+      details: { action: "pi_gui_archive_child_threads", archived: [], skipped: [] },
+    }),
+    createChildThread: async () => ({
+      content: [{ type: "text", text: "created" }],
+      details: { action: "pi_gui_create_child_thread", prompt: "" },
+    }),
+    runWorker: async (_ctx, input) => {
+      received = input;
+      return {
+        content: [{ type: "text", text: "worker result" }],
+        details: {
+          action: "pi_gui_spawn_worker",
+          prompt: input.prompt,
+          status: "succeeded",
+          text: "worker result",
+        },
+      };
+    },
+    listModels: async () => {
+      modelReads++;
+      return {
+        content: [{ type: "text", text: "provider-a/reasoning-a" }],
+        details: {
+          action: "pi_gui_list_models",
+          models: [
+            {
+              provider: "provider-a",
+              modelId: "reasoning-a",
+              label: "Reasoning A",
+              reasoning: true,
+              thinkingLevels: ["off", "low", "high", "max"],
+            },
+          ],
+        },
+      };
+    },
+    listThreads: async () => ({
+      content: [{ type: "text", text: "list" }],
+      details: { action: "pi_gui_list_threads" },
+    }),
+    readThread: async (_ctx, threadId) => ({
+      content: [{ type: "text", text: "read" }],
+      details: { action: "pi_gui_read_thread", threadId },
+    }),
+    sendMessageToThread: async (_ctx, input) => ({
+      content: [{ type: "text", text: "sent" }],
+      details: {
+        action: "pi_gui_send_message_to_thread",
+        threadId: input.threadId,
+        message: input.message,
+      },
+    }),
+  };
+  const tools = createOrchestrationRuntimeTools(bridge);
+  const spawn = tools.find((candidate) => candidate.name === "spawn_worker");
+  const listModels = tools.find((candidate) => candidate.name === "list_models");
+  expect(spawn?.promptGuidelines?.join(" ")).toContain("call list_models");
+  expect(spawn?.promptGuidelines?.join(" ")).toContain("Do not call Codex-native");
+  expect(spawn?.parameters).toMatchObject({
+    properties: {
+      prompt: { type: "string" },
+      selection: {
+        type: "object",
+        required: ["provider", "modelId"],
+        additionalProperties: false,
+      },
+    },
+    required: ["prompt"],
+    additionalProperties: false,
+  });
+
+  const controller = new AbortController();
+  const selection = {
+    provider: "provider-a",
+    modelId: "reasoning-a",
+    thinkingLevel: "high",
+  } as const;
+  await spawn?.execute(
+    "worker-call",
+    { prompt: "Inspect this selected model.", selection },
+    controller.signal,
+    undefined,
+    {} as ExtensionToolContext,
+  );
+  expect(received).toEqual({
+    prompt: "Inspect this selected model.",
+    toolCallId: "worker-call",
+    selection,
+    signal: controller.signal,
+  });
+
+  await listModels?.execute(
+    "models-call",
+    {},
+    controller.signal,
+    undefined,
+    {} as ExtensionToolContext,
+  );
+  expect(modelReads).toBe(1);
 });
 
 test("prompt-only creation preserves owner defaults without reading selection policy", async () => {
@@ -353,6 +475,142 @@ test("invalid selection fails before any session creation", async () => {
     }),
   ).rejects.toThrow(/Child model is unavailable/);
   expect(createCalls).toBe(0);
+});
+
+test("inline worker resolves the exact catalogue entry and inherits the parent thinking level", async () => {
+  let hostInput:
+    | {
+        readonly parentRunId: string;
+        readonly parentToolCallId: string;
+        readonly signal: AbortSignal;
+      }
+    | undefined;
+  let workerSelection: InlineWorkerModelSelection | undefined;
+  const signal = new AbortController().signal;
+  const host = {
+    driver: {
+      cancelCurrentRun: async () => undefined,
+      createSession: async () => {
+        throw new Error("Inline workers must not create a thread");
+      },
+      openSession: async () => ({
+        ref: parentRef,
+        workspace: { workspaceId: "ws", path: "/tmp" },
+        title: "Parent",
+        status: "running",
+        updatedAt: timestamp,
+        runningRunId: "run-a",
+        config: {
+          provider: "provider-a",
+          modelId: "reasoning-a",
+          thinkingLevel: "medium",
+        },
+      }),
+      createInlineWorkerHostCapability: async (
+        _parent: unknown,
+        parentRunId: string,
+        parentToolCallId: string,
+        workerSignal: AbortSignal,
+      ) => {
+        hostInput = { parentRunId, parentToolCallId, signal: workerSignal };
+        return {} as never;
+      },
+      startInlineWorker: (
+        _request: unknown,
+        _host: unknown,
+        selection?: InlineWorkerModelSelection,
+      ) => {
+        workerSelection = selection;
+        return {
+          initial: { status: "running", workerId: "worker", workerRunId: "worker-run" },
+          completion: Promise.resolve({
+            status: "succeeded",
+            workerId: "worker",
+            workerRunId: "worker-run",
+            text: "inline result",
+          }),
+        };
+      },
+    },
+    initialize: async () => undefined,
+    orchestrationState: () => ({ workspaces: [], orchestrationChildren: [] }),
+    workspaceRefFromState: () => ({ workspaceId: "ws", path: "/tmp" }),
+    sessionFromState: () => ({ title: "Parent", status: "running", updatedAt: timestamp }),
+    buildCreateSessionOptions: async () => undefined,
+    getEffectiveChildModelSettings: async () => effective,
+    ensureSessionReady: async () => undefined,
+  };
+  const owner = createOrchestrationOwner(
+    host as unknown as Parameters<typeof createOrchestrationOwner>[0],
+  );
+  const result = await owner.runWorkerToolResult(parentRef, {
+    prompt: "Run the selected worker.",
+    toolCallId: "worker-call",
+    selection: { provider: "provider-a", modelId: "reasoning-a" },
+    signal,
+  });
+
+  expect(hostInput).toEqual({
+    parentRunId: "run-a",
+    parentToolCallId: "worker-call",
+    signal,
+  });
+  expect(workerSelection).toEqual({
+    provider: "provider-a",
+    modelId: "reasoning-a",
+    thinkingLevel: "medium",
+  });
+  expect(result.details).toMatchObject({
+    action: "pi_gui_spawn_worker",
+    status: "succeeded",
+    text: "inline result",
+    modelProvider: "provider-a",
+    modelId: "reasoning-a",
+    thinkingLevel: "medium",
+  });
+});
+
+test("list_models returns only currently usable models with exact thinking support", async () => {
+  const host = {
+    driver: {
+      cancelCurrentRun: async () => undefined,
+      createSession: async () => undefined,
+    },
+    initialize: async () => undefined,
+    orchestrationState: () => ({ workspaces: [], orchestrationChildren: [] }),
+    workspaceRefFromState: () => ({ workspaceId: "ws", path: "/tmp" }),
+    sessionFromState: () => ({ title: "Parent", status: "idle", updatedAt: timestamp }),
+    getEffectiveChildModelSettings: async () => ({
+      ...effective,
+      models: [{ ...effective.models[0]!, label: "Reasoning A" }, ...effective.models.slice(1)],
+    }),
+  };
+  const owner = createOrchestrationOwner(
+    host as unknown as Parameters<typeof createOrchestrationOwner>[0],
+  );
+  const result = await owner.listModelsToolResult(parentRef);
+
+  expect(result.details).toMatchObject({
+    action: "pi_gui_list_models",
+    models: [
+      {
+        provider: "provider-a",
+        modelId: "reasoning-a",
+        label: "Reasoning A",
+        reasoning: true,
+      },
+      {
+        provider: "provider-b",
+        modelId: "plain-b",
+        reasoning: false,
+        thinkingLevels: ["off"],
+      },
+    ],
+    defaultProvider: "provider-a",
+    defaultModelId: "reasoning-a",
+    defaultThinkingLevel: "medium",
+  });
+  expect(result.details?.models).toHaveLength(2);
 });
 
 test("replay returns the original child and selection without consulting current policy", async () => {

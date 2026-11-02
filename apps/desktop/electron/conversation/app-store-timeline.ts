@@ -19,10 +19,12 @@ import {
 import {
   archiveChildThreadsToolName,
   createChildThreadToolName,
+  listModelsToolName,
   listThreadsToolName,
   orchestrationToolNames,
   readThreadToolName,
   sendMessageToThreadToolName,
+  spawnWorkerToolName,
 } from "../orchestration/orchestration-runtime";
 
 export interface RunMetrics {
@@ -433,6 +435,12 @@ function toolLabel(toolName: string, input: unknown): string {
   const detail = toolInputSummary(input);
   if (toolName === createChildThreadToolName) {
     return detail ? `Started child thread: ${detail}` : "Started child thread";
+  }
+  if (toolName === spawnWorkerToolName) {
+    return detail ? `Ran inline worker: ${detail}` : "Ran inline worker";
+  }
+  if (toolName === listModelsToolName) {
+    return "Listed available worker models";
   }
   if (toolName === listThreadsToolName) {
     return "Listed threads";

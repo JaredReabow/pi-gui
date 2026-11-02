@@ -249,6 +249,14 @@ function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBrid
       await store.initialize();
       return store.createChildThreadToolResult(sessionRefFromExtensionContext(ctx), input);
     },
+    runWorker: async (ctx, input) => {
+      await store.initialize();
+      return store.runWorkerToolResult(sessionRefFromExtensionContext(ctx), input);
+    },
+    listModels: async (ctx) => {
+      await store.initialize();
+      return store.listModelsToolResult(sessionRefFromExtensionContext(ctx));
+    },
     listThreads: async (ctx, input) => {
       await store.initialize();
       return store.listThreadsToolResult(sessionRefFromExtensionContext(ctx), input.workspace);
@@ -1170,7 +1178,8 @@ app
         {
           name: "pi-gui-thread-orchestration",
           displayName: "Thread orchestration",
-          description: "Lets pi start, read and message other pi-gui threads",
+          description:
+            "Lets pi discover models, run inline workers, and start, read or message threads",
           factory: createOrchestrationRuntimeExtension(orchestrationRuntimeBridge),
         },
         {

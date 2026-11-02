@@ -10,6 +10,7 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { sessionKey } from "@pi-gui/session-driver";
 import type {
   CreateSessionOptions,
+  InlineWorkerModelSelection,
   SessionConfig,
   SessionDriverEvent,
   SessionRef,
@@ -42,12 +43,15 @@ import {
   createChildThreadAction,
   createChildThreadRequestFromToolOutput,
   createChildThreadToolName,
+  listModelsAction,
+  listModelsToolName,
   listThreadsAction,
   listThreadsRequestedFromToolOutput,
   listThreadsToolName,
   readThreadAction,
   readThreadIdFromToolOutput,
   readThreadToolName,
+  spawnWorkerAction,
   sendMessageToThreadAction,
   sendMessageToThreadFromToolOutput,
   sendMessageToThreadToolName,
@@ -57,9 +61,11 @@ import type {
   ArchiveChildThreadsToolDetails,
   CreateChildThreadToolDetails,
   ListThreadsToolDetails,
+  ListModelsToolDetails,
   OrchestrationThreadListEntry,
   ReadThreadToolDetails,
   SendMessageToThreadToolDetails,
+  SpawnWorkerToolDetails,
 } from "./orchestration-runtime";
 
 const CHILD_TITLE_LIMIT = 56;
@@ -82,7 +88,14 @@ interface OrchestrationStateView {
   readonly orchestrationChildren: readonly OrchestrationChildThread[];
 }
 
-type OrchestrationDriver = Pick<PiSdkDriver, "cancelCurrentRun" | "createSession">;
+type OrchestrationDriver = Pick<
+  PiSdkDriver,
+  | "cancelCurrentRun"
+  | "createSession"
+  | "createInlineWorkerHostCapability"
+  | "openSession"
+  | "startInlineWorker"
+>;
 
 interface OrchestrationOwnerHost {
   readonly driver: OrchestrationDriver;
@@ -174,6 +187,16 @@ export interface OrchestrationOwner {
       readonly selection?: ChildModelSelection;
     },
   ): Promise<AgentToolResult<CreateChildThreadToolDetails>>;
+  runWorkerToolResult(
+    parentRef: SessionRef,
+    input: {
+      readonly prompt: string;
+      readonly toolCallId: string;
+      readonly selection?: ChildModelSelection;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<AgentToolResult<SpawnWorkerToolDetails>>;
+  listModelsToolResult(parentRef: SessionRef): Promise<AgentToolResult<ListModelsToolDetails>>;
   listThreadsToolResult(
     parentRef: SessionRef,
     workspace?: string,
@@ -209,6 +232,8 @@ export function createOrchestrationOwner(store: OrchestrationOwnerHost): Orchest
       hasOrchestrationParentSession(store.orchestrationChildren(), sessionRef),
     createChildThreadToolResult: (parentRef, input) =>
       createChildThreadToolResult(store, parentRef, input),
+    runWorkerToolResult: (parentRef, input) => runWorkerToolResult(store, parentRef, input),
+    listModelsToolResult: (parentRef) => listModelsToolResult(store, parentRef),
     listThreadsToolResult: (parentRef, workspace) =>
       listThreadsToolResult(store, parentRef, workspace),
     readThreadToolResult: (parentRef, threadId) => readThreadToolResult(store, parentRef, threadId),
@@ -609,6 +634,145 @@ async function createChildThreadToolResult(
 
   return {
     content: [{ type: "text", text: formatCreateChildThreadResult(details) }],
+    details,
+  };
+}
+
+async function listModelsToolResult(
+  store: OrchestrationOwnerHost,
+  parentRef: SessionRef,
+): Promise<AgentToolResult<ListModelsToolDetails>> {
+  const effective = await store.getEffectiveChildModelSettings(parentRef.workspaceId);
+  const models = effective.models
+    .filter((model) => model.available && model.scope !== "off")
+    .map((model) => ({
+      provider: model.provider,
+      modelId: model.modelId,
+      ...(model.label ? { label: model.label } : {}),
+      reasoning: model.reasoning,
+      thinkingLevels: model.reasoning
+        ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        : ["off"],
+    }));
+  const lines =
+    models.length === 0
+      ? ["No worker models are currently available. Connect a provider in Settings."]
+      : [
+          "Available worker models:",
+          ...models.map(
+            (model) =>
+              `- ${model.provider}/${model.modelId}${model.label ? ` (${model.label})` : ""}; thinking: ${model.thinkingLevels.join(", ")}`,
+          ),
+          effective.defaultProvider && effective.defaultModelId
+            ? `Default: ${effective.defaultProvider}/${effective.defaultModelId}${
+                effective.defaultThinkingLevel ? ` (${effective.defaultThinkingLevel})` : ""
+              }`
+            : "Default: inherited from the current thread",
+        ];
+  const details: ListModelsToolDetails = {
+    action: listModelsAction,
+    models,
+    ...(effective.defaultProvider ? { defaultProvider: effective.defaultProvider } : {}),
+    ...(effective.defaultModelId ? { defaultModelId: effective.defaultModelId } : {}),
+    ...(effective.defaultThinkingLevel
+      ? { defaultThinkingLevel: effective.defaultThinkingLevel }
+      : {}),
+  };
+  return {
+    content: [{ type: "text", text: lines.join("\n") }],
+    details,
+  };
+}
+
+async function runWorkerToolResult(
+  store: OrchestrationOwnerHost,
+  parentRef: SessionRef,
+  input: {
+    readonly prompt: string;
+    readonly toolCallId: string;
+    readonly selection?: ChildModelSelection;
+    readonly signal?: AbortSignal;
+  },
+): Promise<AgentToolResult<SpawnWorkerToolDetails>> {
+  const prompt = input.prompt.trim();
+  if (!prompt) {
+    throw new Error("spawn_worker requires a non-empty prompt.");
+  }
+  await store.ensureSessionReady(parentRef);
+  const parent = await store.driver.openSession(parentRef);
+  if (!parent.runningRunId) {
+    throw new Error("spawn_worker requires a live running parent turn.");
+  }
+
+  const requestedSelection = input.selection ? childSelection_decode(input.selection) : undefined;
+  let selection: InlineWorkerModelSelection | undefined;
+  if (requestedSelection) {
+    const effective = await store.getEffectiveChildModelSettings(parentRef.workspaceId);
+    const requestedModel = effective.models.find(
+      (candidate) =>
+        candidate.provider === requestedSelection.provider &&
+        candidate.modelId === requestedSelection.modelId,
+    );
+    const inheritedThinkingLevel =
+      requestedSelection.thinkingLevel ??
+      (requestedModel?.reasoning ? parent.config?.thinkingLevel : "off");
+    const resolved = childModelSelection_createOptions(effective, requestedSelection, {
+      ...(inheritedThinkingLevel ? { initialThinkingLevel: inheritedThinkingLevel } : {}),
+    });
+    if (!resolved.initialModel) {
+      throw new Error("spawn_worker model selection could not be resolved.");
+    }
+    selection = {
+      ...resolved.initialModel,
+      ...(resolved.initialThinkingLevel ? { thinkingLevel: resolved.initialThinkingLevel } : {}),
+    };
+  }
+
+  const host = await store.driver.createInlineWorkerHostCapability(
+    parentRef,
+    parent.runningRunId,
+    input.toolCallId,
+    input.signal ?? new AbortController().signal,
+  );
+  const result = await store.driver.startInlineWorker({ prompt }, host, selection).completion;
+  const modelProvider = selection?.provider ?? parent.config?.provider;
+  const modelId = selection?.modelId ?? parent.config?.modelId;
+  const thinkingLevel = selection?.thinkingLevel ?? parent.config?.thinkingLevel;
+  const common: SpawnWorkerToolDetails = {
+    action: spawnWorkerAction,
+    prompt,
+    status: result.status,
+    ...(modelProvider ? { modelProvider } : {}),
+    ...(modelId ? { modelId } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+  };
+
+  if (result.status === "succeeded") {
+    const details: SpawnWorkerToolDetails = { ...common, text: result.text };
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${
+            modelProvider && modelId
+              ? `Worker model: ${modelProvider}/${modelId}${thinkingLevel ? ` (${thinkingLevel})` : ""}\n`
+              : ""
+          }${result.text}`,
+        },
+      ],
+      details,
+    };
+  }
+
+  const error =
+    result.status === "failed"
+      ? result.error.message
+      : result.status === "cancelled"
+        ? "Inline worker was cancelled."
+        : "Inline worker timed out.";
+  const details: SpawnWorkerToolDetails = { ...common, error };
+  return {
+    content: [{ type: "text", text: `Inline worker ${result.status}: ${error}` }],
     details,
   };
 }

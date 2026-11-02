@@ -15,6 +15,10 @@ import type {
 
 export const createChildThreadToolName = "create_child_thread";
 export const createChildThreadAction = "pi_gui_create_child_thread";
+export const spawnWorkerToolName = "spawn_worker";
+export const spawnWorkerAction = "pi_gui_spawn_worker";
+export const listModelsToolName = "list_models";
+export const listModelsAction = "pi_gui_list_models";
 export const listThreadsToolName = "list_threads";
 export const listThreadsAction = "pi_gui_list_threads";
 export const readThreadToolName = "read_thread";
@@ -27,6 +31,8 @@ export const archiveChildThreadsAction = "pi_gui_archive_child_threads";
 /** Every pi-gui thread tool. Their names are not file or search tools, whatever they contain. */
 export const orchestrationToolNames: ReadonlySet<string> = new Set([
   createChildThreadToolName,
+  spawnWorkerToolName,
+  listModelsToolName,
   listThreadsToolName,
   readThreadToolName,
   sendMessageToThreadToolName,
@@ -50,6 +56,32 @@ export interface CreateChildThreadToolDetails {
   readonly childSessionId?: string;
   readonly title?: string;
   readonly deliveryStatus?: "running" | "responded";
+  readonly error?: string;
+}
+
+export interface SpawnWorkerToolDetails {
+  readonly action: typeof spawnWorkerAction;
+  readonly prompt: string;
+  readonly status?: "succeeded" | "failed" | "cancelled" | "timedOut";
+  readonly text?: string;
+  readonly modelProvider?: string;
+  readonly modelId?: string;
+  readonly thinkingLevel?: string;
+  readonly error?: string;
+}
+
+export interface ListModelsToolDetails {
+  readonly action: typeof listModelsAction;
+  readonly models?: readonly {
+    readonly provider: string;
+    readonly modelId: string;
+    readonly label?: string;
+    readonly reasoning: boolean;
+    readonly thinkingLevels: readonly string[];
+  }[];
+  readonly defaultProvider?: string;
+  readonly defaultModelId?: string;
+  readonly defaultThinkingLevel?: string;
   readonly error?: string;
 }
 
@@ -127,6 +159,16 @@ export interface OrchestrationRuntimeBridge {
       readonly selection?: ChildModelSelection;
     },
   ) => Promise<AgentToolResult<CreateChildThreadToolDetails>>;
+  readonly listModels: (ctx: ExtensionContext) => Promise<AgentToolResult<ListModelsToolDetails>>;
+  readonly runWorker: (
+    ctx: ExtensionContext,
+    input: {
+      readonly prompt: string;
+      readonly toolCallId: string;
+      readonly selection?: ChildModelSelection;
+      readonly signal?: AbortSignal;
+    },
+  ) => Promise<AgentToolResult<SpawnWorkerToolDetails>>;
   readonly listThreads: (
     ctx: ExtensionContext,
     input: { readonly workspace?: string },
@@ -144,6 +186,8 @@ export interface OrchestrationRuntimeBridge {
 type OrchestrationToolDetails =
   | ArchiveChildThreadsToolDetails
   | CreateChildThreadToolDetails
+  | SpawnWorkerToolDetails
+  | ListModelsToolDetails
   | ListThreadsToolDetails
   | ReadThreadToolDetails
   | SendMessageToThreadToolDetails;
@@ -160,7 +204,8 @@ function createCreateChildThreadTool(
     promptGuidelines: [
       "Use create_child_thread when the user asks you to spin up, delegate to, or run a separate child thread.",
       "Keep the child prompt concrete and self-contained so the user can inspect the resulting thread.",
-      "Set selection only when the user requested an exact provider, model, or thinking level; never guess or silently substitute one.",
+      "Call list_models before choosing an exact provider/modelId or thinking level. Copy the returned values exactly; never guess or silently substitute one.",
+      "pi-gui does not use the Codex-native create_thread or list_projects tool names. Use create_child_thread and list_threads.",
     ],
     parameters: {
       type: "object",
@@ -207,6 +252,99 @@ function createCreateChildThreadTool(
         toolCallId,
         ...(selection ? { selection } : {}),
       });
+    },
+  };
+}
+
+function createSpawnWorkerTool(
+  bridge: OrchestrationRuntimeBridge,
+): ToolDefinition<any, OrchestrationToolDetails> {
+  return {
+    name: spawnWorkerToolName,
+    label: "Run inline worker",
+    description:
+      "Run a self-contained worker inline on the current or a selected model, returning its final answer without creating a thread.",
+    promptSnippet:
+      "spawn_worker: run a delegated worker inline on the current or a selected model and return its answer here.",
+    promptGuidelines: [
+      "Use spawn_worker for a focused delegated task whose final answer should return in this conversation without creating a new thread.",
+      "The worker inherits the current model and thinking level unless selection is provided.",
+      "Before selecting a model, call list_models and copy its exact provider and modelId. Use list_models to determine whether the model supports thinking and the exact thinking levels available.",
+      "Do not call Codex-native list_projects, create_thread, or other unavailable tool names. pi-gui exposes list_threads, create_child_thread, and spawn_worker.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description:
+            "Concrete, self-contained instructions for the worker. Its final response is returned as this tool's result.",
+        },
+        selection: {
+          type: "object",
+          description:
+            "Optional exact worker model. Call list_models first. Provider and modelId are required together; thinkingLevel is optional and must be one of the model's reported levels.",
+          properties: {
+            provider: {
+              type: "string",
+              description: "Exact provider id returned by list_models.",
+            },
+            modelId: {
+              type: "string",
+              description: "Exact model id returned by list_models.",
+            },
+            thinkingLevel: {
+              type: "string",
+              enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+              description:
+                "Exact thinking level reported for the selected model. Omit to inherit the current thread's level.",
+            },
+          },
+          required: ["provider", "modelId"],
+          additionalProperties: false,
+        },
+      },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+    async execute(toolCallId, params, signal, _onUpdate, ctx) {
+      childSelection_rejectOriginInput(params);
+      const prompt = createChildThreadPromptFromParams(params);
+      if (!prompt) {
+        throw new Error("spawn_worker requires a non-empty prompt.");
+      }
+      const selection = createChildThreadSelectionFromParams(params);
+      return bridge.runWorker(ctx, {
+        prompt,
+        toolCallId,
+        ...(selection ? { selection } : {}),
+        ...(signal ? { signal } : {}),
+      });
+    },
+  };
+}
+
+function createListModelsTool(
+  bridge: OrchestrationRuntimeBridge,
+): ToolDefinition<any, OrchestrationToolDetails> {
+  return {
+    name: listModelsToolName,
+    label: "List worker models",
+    description:
+      "List the models currently available for pi-gui child threads and inline workers, including reasoning support.",
+    promptSnippet:
+      "list_models: list currently available worker models and their supported thinking levels.",
+    promptGuidelines: [
+      "Call list_models before an explicit model selection for create_child_thread or spawn_worker.",
+      "Only use entries returned by this tool. Provider and modelId are an exact pair; labels are display names only.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      return bridge.listModels(ctx);
     },
   };
 }
@@ -393,6 +531,8 @@ export function createOrchestrationRuntimeTools(
 ): readonly ToolDefinition<any, OrchestrationToolDetails>[] {
   return [
     createCreateChildThreadTool(bridge),
+    createSpawnWorkerTool(bridge),
+    createListModelsTool(bridge),
     createListThreadsTool(bridge),
     createReadThreadTool(bridge),
     createSendMessageToThreadTool(bridge),

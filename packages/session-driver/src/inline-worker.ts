@@ -1,4 +1,4 @@
-import type { RunId, SessionRef } from "./types.js";
+import type { RunId, SessionModelSelection, SessionRef } from "./types.js";
 
 /**
  * The only model-authored inline-worker input in the first contract phase.
@@ -8,6 +8,15 @@ import type { RunId, SessionRef } from "./types.js";
  */
 export interface InlineWorkerModelRequest {
   readonly prompt: string;
+}
+
+/**
+ * Exact host-resolved model override for one inline worker. The model-authored
+ * tool call is validated and converted to this shape by the desktop host before
+ * the driver starts work.
+ */
+export interface InlineWorkerModelSelection extends SessionModelSelection {
+  readonly thinkingLevel?: string;
 }
 
 /** Runtime policy supplies these values; this contract does not define defaults. */
@@ -152,6 +161,7 @@ export interface InlineWorkerDriverCapability {
   startInlineWorker(
     request: InlineWorkerModelRequest,
     host: InlineWorkerHostCapability,
+    selection?: InlineWorkerModelSelection,
   ): InlineWorkerRunHandle;
 }
 

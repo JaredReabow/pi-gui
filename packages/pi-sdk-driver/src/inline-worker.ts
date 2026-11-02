@@ -9,7 +9,6 @@ import {
   type CreateAgentSessionResult,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type {
   InlineWorkerFailedResult,
   InlineWorkerHostAssociation,
@@ -22,6 +21,7 @@ import {
 } from "./inline-worker-policy.js";
 
 export type InlineWorkerCancellationReason = "caller" | "parent" | "deadline";
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface InlineWorkerExecutionContext {
   readonly association: InlineWorkerHostAssociation;

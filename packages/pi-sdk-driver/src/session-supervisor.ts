@@ -35,6 +35,7 @@ import type {
   InlineWorkerDriverCapability,
   InlineWorkerHostAssociation,
   InlineWorkerHostCapability,
+  InlineWorkerModelSelection,
   InlineWorkerModelRequest,
   InlineWorkerRunHandle,
   SessionConfig,
@@ -1599,6 +1600,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
   startInlineWorker(
     request: InlineWorkerModelRequest,
     host: InlineWorkerHostCapability,
+    selection?: InlineWorkerModelSelection,
   ): InlineWorkerRunHandle {
     const prepared = this.preparedInlineWorkerHosts.get(host);
     if (!prepared) {
@@ -1627,12 +1629,34 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
       );
     }
 
+    const selectedModel = selection
+      ? session.modelRuntime.getModel(selection.provider, selection.modelId)
+      : session.model;
+    if (!selectedModel) {
+      return this.inlineWorkerSupervisor.rejectTrusted(
+        prepared.association,
+        "WORKER_START_FAILED",
+        `Unknown inline-worker model: ${selection?.provider}/${selection?.modelId}`,
+      );
+    }
+    const thinkingLevel = selection?.thinkingLevel ?? session.thinkingLevel;
+    if (
+      !isWorkerThinkingLevel(thinkingLevel) ||
+      (!selectedModel.reasoning && thinkingLevel !== "off")
+    ) {
+      return this.inlineWorkerSupervisor.rejectTrusted(
+        prepared.association,
+        "WORKER_START_FAILED",
+        `Inline-worker model ${selectedModel.provider}/${selectedModel.id} does not support thinking level ${thinkingLevel}.`,
+      );
+    }
+
     return this.inlineWorkerSupervisor.start({
       association: prepared.association,
       prompt: decoded.prompt,
-      model: session.model,
+      model: selectedModel,
       modelRuntime: session.modelRuntime,
-      thinkingLevel: session.thinkingLevel,
+      thinkingLevel,
       cwd: record.workspace.path,
       agentDir: this.agentDir ?? record.workspace.path,
       parentSignal: prepared.signal,
@@ -3777,6 +3801,24 @@ function clampThinkingLevel(level: string, availableLevels: readonly string[]): 
     }
   }
   return availableLevels[0] ?? "off";
+}
+
+const INLINE_WORKER_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+function isWorkerThinkingLevel(
+  value: string,
+): value is (typeof INLINE_WORKER_THINKING_LEVELS)[number] {
+  return INLINE_WORKER_THINKING_LEVELS.includes(
+    value as (typeof INLINE_WORKER_THINKING_LEVELS)[number],
+  );
 }
 
 async function createCanonicalWorkspaceRef(

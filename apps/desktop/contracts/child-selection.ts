@@ -37,6 +37,7 @@ export interface EffectiveChildModelSettings {
   readonly models: readonly {
     readonly provider: string;
     readonly modelId: string;
+    readonly label?: string;
     readonly available: boolean;
     readonly reasoning: boolean;
     readonly scope: RuntimeModelRecord["scope"];

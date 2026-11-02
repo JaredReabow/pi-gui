@@ -16,6 +16,7 @@ import type {
   HostUiResponse,
   InlineWorkerDriverCapability,
   InlineWorkerHostCapability,
+  InlineWorkerModelSelection,
   InlineWorkerModelRequest,
   InlineWorkerRunHandle,
   SessionDriver,
@@ -122,8 +123,9 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
   startInlineWorker(
     request: InlineWorkerModelRequest,
     host: InlineWorkerHostCapability,
+    selection?: InlineWorkerModelSelection,
   ): InlineWorkerRunHandle {
-    return this.supervisor.startInlineWorker(request, host);
+    return this.supervisor.startInlineWorker(request, host, selection);
   }
 
   cancelInlineWorkersForParent(parent: SessionRef): Promise<void> {

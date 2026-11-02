@@ -122,6 +122,7 @@ export type {
   InlineWorkerHostAssociation,
   InlineWorkerHostCapability,
   InlineWorkerIdentity,
+  InlineWorkerModelSelection,
   InlineWorkerModelRequest,
   InlineWorkerQueuedResult,
   InlineWorkerRequestBounds,

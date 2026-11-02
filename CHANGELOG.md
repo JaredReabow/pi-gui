@@ -33,6 +33,10 @@
 
 ### Configuration and integrations
 
+- Restored the model-aware orchestration harness: the agent now sees `spawn_worker`,
+  `list_models`, and the pi-gui thread tool names, can discover exact available
+  provider/model pairs and thinking support, and can run an inline worker on the inherited
+  or explicitly selected model without creating a thread.
 - Added direct scheduled-task Pause/Resume controls with persisted state and pending/error
   feedback.
 - Added subagent limits, searchable and bulk-selectable effective model allowlists, and

@@ -1,4 +1,5 @@
 import type {
+  ChildModelSelection,
   SessionInitiatingOrigin,
   EffectiveChildModelSettings,
 } from "../../contracts/child-selection";
@@ -1244,6 +1245,7 @@ export class DesktopAppStore {
         runtime?.models.map((model) => ({
           provider: model.providerId,
           modelId: model.modelId,
+          label: model.label,
           available: model.available,
           reasoning: model.reasoning,
           scope: model.scope,
@@ -1479,10 +1481,27 @@ export class DesktopAppStore {
 
   async createChildThreadToolResult(
     parentRef: SessionRef,
-    input: { readonly prompt: string; readonly toolCallId: string },
+    input: {
+      readonly prompt: string;
+      readonly toolCallId: string;
+      readonly selection?: ChildModelSelection;
+    },
   ) {
     await this.initialize();
     return this.orchestrationOwner.createChildThreadToolResult(parentRef, input);
+  }
+
+  async runWorkerToolResult(
+    parentRef: SessionRef,
+    input: Parameters<typeof this.orchestrationOwner.runWorkerToolResult>[1],
+  ) {
+    await this.initialize();
+    return this.orchestrationOwner.runWorkerToolResult(parentRef, input);
+  }
+
+  async listModelsToolResult(parentRef: SessionRef) {
+    await this.initialize();
+    return this.orchestrationOwner.listModelsToolResult(parentRef);
   }
 
   listThreadsToolResult(parentRef: SessionRef, workspace?: string) {

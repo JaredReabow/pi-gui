@@ -20,6 +20,7 @@ import {
 } from "../dist/inline-worker-policy.js";
 import type {
   InlineWorkerHostCapability,
+  InlineWorkerModelSelection,
   InlineWorkerRunHandle,
   InlineWorkerTerminalResult,
   SessionDriverEvent,
@@ -86,6 +87,7 @@ interface LoopbackHarness {
     toolCallId: string,
     prompt: string,
     signal?: AbortSignal,
+    selection?: InlineWorkerModelSelection,
   ): Promise<{ readonly host: InlineWorkerHostCapability; readonly handle: InlineWorkerRunHandle }>;
   workerOptions(): readonly CreateAgentSessionOptions[];
   workerSessions(): readonly AgentSession[];
@@ -381,9 +383,10 @@ async function createHarness(
     toolCallId: string,
     prompt: string,
     signal?: AbortSignal,
+    selection?: InlineWorkerModelSelection,
   ) {
     const capability = await host(parentRef, runId, toolCallId, signal);
-    const handle = driver.startInlineWorker({ prompt }, capability);
+    const handle = driver.startInlineWorker({ prompt }, capability, selection);
     return { host: capability, handle };
   }
 
@@ -495,6 +498,39 @@ await test(
       assert.equal(session.sessionFile, undefined);
       assert.deepEqual(session.getActiveToolNames(), []);
     }
+  },
+);
+
+await test(
+  "explicit worker selection overrides the parent model and thinking level",
+  { timeout: 15_000 },
+  async (t) => {
+    const h = await createHarness(t);
+    const runId = await h.activateRun(h.ref);
+    h.startTool(h.ref, "selected-worker-tool");
+    const { handle } = await h.startWorker(
+      h.ref,
+      runId,
+      "selected-worker-tool",
+      "selected-worker",
+      undefined,
+      {
+        provider: "inline-loopback",
+        modelId: "beta",
+        thinkingLevel: "high",
+      },
+    );
+    const result = await handle.completion;
+    assert.equal(result.status, "succeeded");
+    if (result.status === "succeeded") {
+      assert.equal(result.text, "RESULT:beta");
+    }
+    const request = h.requests.find((entry) => entry.prompt === "selected-worker");
+    assert.equal(request?.model, "beta");
+    assert.equal(request?.temperature, 0.77);
+    const worker = h.workerOptions()[0];
+    assert.equal(worker?.model?.id, "beta");
+    assert.equal(worker?.thinkingLevel, "high");
   },
 );
 

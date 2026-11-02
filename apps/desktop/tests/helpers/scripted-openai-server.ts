@@ -7,6 +7,7 @@ export interface ScriptedChatMessage {
 }
 
 export interface ScriptedChatRequest {
+  readonly model: string;
   readonly messages: readonly ScriptedChatMessage[];
   readonly toolNames: readonly string[];
 }
@@ -38,10 +39,12 @@ export async function startScriptedOpenAiServer(
     });
     request.on("end", () => {
       const payload = JSON.parse(body) as {
+        model?: string;
         messages?: { role: string; content: unknown }[];
         tools?: { function?: { name?: string } }[];
       };
       const scripted: ScriptedChatRequest = {
+        model: payload.model ?? "",
         messages: (payload.messages ?? []).map((message) => ({
           role: message.role,
           content: contentText(message.content),
