@@ -26,10 +26,7 @@ function scriptModelHarness(request: ScriptedChatRequest): ScriptedReply {
         tool: "spawn_worker",
         args: {
           prompt: "Return the worker model name.",
-          selection: {
-            provider: "scripted-test",
-            modelId: "worker",
-          },
+          model: "scripted-test/worker",
         },
       };
     }

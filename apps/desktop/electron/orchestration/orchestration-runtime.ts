@@ -4,7 +4,10 @@ import type {
   ChildOriginMetadata,
   ChildSelectedConfiguration,
 } from "../../contracts/child-selection";
-import { childSelection_decode } from "../../contracts/child-selection";
+import {
+  childSelection_decode,
+  childSelection_decodeSelectedConfig,
+} from "../../contracts/child-selection";
 import type {
   AgentToolResult,
   ExtensionAPI,
@@ -214,10 +217,21 @@ function createCreateChildThreadTool(
           type: "string",
           description: "Concrete instructions for the child thread.",
         },
+        model: {
+          type: "string",
+          description:
+            'Exact provider/model pair returned by list_models, for example "codex-router/deepseek/deepseek-v4.1-flash". Omit to inherit the current thread model.',
+        },
+        thinkingLevel: {
+          type: "string",
+          enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          description:
+            "Optional thinking level reported for the selected model. Omit to inherit the current thread level when supported.",
+        },
         selection: {
           type: "object",
           description:
-            "Optional exact model selection. Provider and modelId are required together; thinkingLevel is optional.",
+            "Legacy structured form of model and thinkingLevel. Prefer the top-level model and thinkingLevel fields.",
           properties: {
             provider: {
               type: "string",
@@ -280,10 +294,21 @@ function createSpawnWorkerTool(
           description:
             "Concrete, self-contained instructions for the worker. Its final response is returned as this tool's result.",
         },
+        model: {
+          type: "string",
+          description:
+            'Exact provider/model pair returned by list_models, for example "codex-router/deepseek/deepseek-v4.1-flash". Omit to inherit the current thread model.',
+        },
+        thinkingLevel: {
+          type: "string",
+          enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          description:
+            "Optional thinking level reported for the selected model. Omit to inherit the current thread level when supported.",
+        },
         selection: {
           type: "object",
           description:
-            "Optional exact worker model. Call list_models first. Provider and modelId are required together; thinkingLevel is optional and must be one of the model's reported levels.",
+            "Legacy structured form of model and thinkingLevel. Prefer the top-level model and thinkingLevel fields.",
           properties: {
             provider: {
               type: "string",
@@ -561,10 +586,43 @@ export function createChildThreadPromptFromParams(params: unknown): string | und
 export function createChildThreadSelectionFromParams(
   params: unknown,
 ): ChildModelSelection | undefined {
-  if (!isRecord(params) || !("selection" in params)) {
+  if (!isRecord(params)) {
     return undefined;
   }
-  return childSelection_decode(params.selection);
+  const model = stringParam(params, "model");
+  const thinkingLevel = stringParam(params, "thinkingLevel");
+  const hasStructuredSelection = "selection" in params;
+  if (model && hasStructuredSelection) {
+    throw new Error("Pass either model/thinkingLevel or selection, not both.");
+  }
+  if (thinkingLevel && !model) {
+    throw new Error("thinkingLevel requires model.");
+  }
+  if (model) {
+    const separator = model.indexOf("/");
+    if (separator <= 0 || separator === model.length - 1) {
+      throw new Error("model must be an exact provider/modelId pair returned by list_models.");
+    }
+    return childSelection_decode({
+      provider: model.slice(0, separator),
+      modelId: model.slice(separator + 1),
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+    });
+  }
+  if (hasStructuredSelection) {
+    return childSelection_decode(params.selection);
+  }
+  if ("selectedConfig" in params) {
+    const selected = childSelection_decodeSelectedConfig(params.selectedConfig);
+    if (selected.provider && selected.modelId) {
+      return childSelection_decode({
+        provider: selected.provider,
+        modelId: selected.modelId,
+        ...(selected.thinkingLevel ? { thinkingLevel: selected.thinkingLevel } : {}),
+      });
+    }
+  }
+  return undefined;
 }
 
 export function createChildThreadRequestFromToolOutput(

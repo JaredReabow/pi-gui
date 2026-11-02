@@ -133,7 +133,7 @@ test("provider/model and thinking validation rejects every non-exact request", (
   }
 });
 
-test("registered create_child_thread exposes and forwards only the strict selection shape", async () => {
+test("registered create_child_thread exposes flat model fields and normalizes the exact selection", async () => {
   let received:
     | {
         readonly prompt: string;
@@ -188,6 +188,10 @@ test("registered create_child_thread exposes and forwards only the strict select
   expect(tool?.parameters).toMatchObject({
     properties: {
       prompt: { type: "string" },
+      model: { type: "string" },
+      thinkingLevel: {
+        enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      },
       selection: {
         type: "object",
         required: ["provider", "modelId"],
@@ -205,7 +209,11 @@ test("registered create_child_thread exposes and forwards only the strict select
   } as const;
   await tool?.execute(
     "selection-call",
-    { prompt: "Inspect the selected model.", selection },
+    {
+      prompt: "Inspect the selected model.",
+      model: "provider-a/reasoning-a",
+      thinkingLevel: "high",
+    },
     undefined,
     undefined,
     {} as ExtensionToolContext,
@@ -314,6 +322,10 @@ test("spawn_worker and list_models are registered and use the exact live-model c
   expect(spawn?.parameters).toMatchObject({
     properties: {
       prompt: { type: "string" },
+      model: { type: "string" },
+      thinkingLevel: {
+        enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      },
       selection: {
         type: "object",
         required: ["provider", "modelId"],
@@ -332,7 +344,11 @@ test("spawn_worker and list_models are registered and use the exact live-model c
   } as const;
   await spawn?.execute(
     "worker-call",
-    { prompt: "Inspect this selected model.", selection },
+    {
+      prompt: "Inspect this selected model.",
+      model: "provider-a/reasoning-a",
+      thinkingLevel: "high",
+    },
     controller.signal,
     undefined,
     {} as ExtensionToolContext,
