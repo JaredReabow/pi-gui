@@ -153,7 +153,7 @@
 
 .timeline-item--user {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
   min-width: 0;
   max-width: 100%;
@@ -224,6 +224,20 @@
   border-radius: var(--radius-xl);
   border: 1px solid transparent;
   background: var(--surface-muted);
+}
+
+.timeline-item__user-time {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted-subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 520;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
 }
 
 .timeline-item__attachments {

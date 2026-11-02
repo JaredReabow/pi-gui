@@ -7,6 +7,7 @@ import {
   emitTestSessionEvent,
   getDesktopState,
   launchDesktop,
+  launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
   waitForWorkspaceByPath,
@@ -103,21 +104,23 @@ async function seedLongToolCall(harness: DesktopHarness, sessionRef: SessionRef)
   await emitTestSessionEvent(harness, finished);
 }
 
-async function seedLongUserRow(harness: DesktopHarness, sessionRef: SessionRef): Promise<void> {
-  const timestamp = new Date().toISOString();
+async function seedLongUserRow(harness: DesktopHarness, sessionRef: SessionRef): Promise<string> {
+  const queuedAt = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+  const sentAt = new Date().toISOString();
   const event: Extract<SessionDriverEvent, { type: "queuedMessageStarted" }> = {
     type: "queuedMessageStarted",
     sessionRef,
-    timestamp,
+    timestamp: sentAt,
     message: {
       id: "timeline-overflow-user-row",
       mode: "followUp",
       text: LONG_USER_MESSAGE,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: queuedAt,
+      updatedAt: queuedAt,
     },
   };
   await emitTestSessionEvent(harness, event);
+  return sentAt;
 }
 
 async function readOverflowMetrics(
@@ -224,16 +227,20 @@ async function saveProofVideo(video: Video | null, proofDir: string | undefined)
 test("keeps long tool metadata and user rows inside the transcript at wide and narrow widths", async () => {
   test.setTimeout(90_000);
   const proofDir = process.env.PI_APP_TIMELINE_OVERFLOW_PROOF_DIR?.trim();
+  const recordVideo = Boolean(
+    proofDir && process.env.PI_APP_TIMELINE_OVERFLOW_RECORD_VIDEO === "1",
+  );
   if (proofDir) {
     await mkdir(proofDir, { recursive: true });
   }
 
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("timeline-overflow-workspace");
-  const harness = await launchDesktop(userDataDir, {
+  const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
+  const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
     testMode: "background",
-    ...(proofDir
+    ...(recordVideo
       ? {
           recordVideoDir: proofDir,
           recordVideoSize: WIDE_WINDOW,
@@ -250,9 +257,13 @@ test("keeps long tool metadata and user rows inside the transcript at wide and n
     await createNamedThread(window, "Timeline overflow proof");
 
     const sessionRef = await selectedSessionRef(window);
-    await seedLongUserRow(harness, sessionRef);
+    const sentAt = await seedLongUserRow(harness, sessionRef);
     const userRow = window.locator(".timeline-item--user", { hasText: "Long user row" });
     await expect(userRow).toBeVisible({ timeout: 15_000 });
+    const userTimestamp = userRow.getByTestId("user-message-timestamp");
+    await expect(userTimestamp).toBeVisible();
+    await expect(userTimestamp).toHaveAttribute("datetime", sentAt);
+    await expect(userTimestamp).toContainText(String(new Date(sentAt).getFullYear()));
     await seedLongToolCall(harness, sessionRef);
 
     const toolHeader = window.locator(".timeline-tool__header", { hasText: LONG_TOOL_NAME });

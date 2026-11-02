@@ -48,6 +48,8 @@ import {
   useConversationClipboard,
 } from "./conversation-copy";
 import { conversationDurationFormat } from "./conversation-duration";
+import { conversationMessageTimestamp_format } from "./conversation-message-timestamp";
+import { useI18n } from "../../i18n";
 
 export function TimelineItem({
   item,
@@ -170,6 +172,7 @@ function TimelineMessage({
   readonly onOpenAnnotation?: OpenAnnotation;
 }) {
   const articleRef = useRef<HTMLElement | null>(null);
+  const { locale } = useI18n();
   const crossProject = useMemo(
     () => (item.role === "user" ? parseCrossProjectMessage(item.text) : null),
     [item.role, item.text],
@@ -190,8 +193,19 @@ function TimelineMessage({
 
   if (item.role === "user") {
     const body = annotated ? annotated.body : (crossProject?.body ?? item.text);
+    const sentAt = conversationMessageTimestamp_format(item.createdAt, locale);
     return (
       <article className="timeline-item timeline-item--user" ref={articleRef}>
+        {sentAt ? (
+          <time
+            className="timeline-item__user-time"
+            data-testid="user-message-timestamp"
+            dateTime={item.createdAt}
+            title={sentAt}
+          >
+            {sentAt}
+          </time>
+        ) : null}
         <div className="timeline-item__user-stack">
           {scheduledOrigin ? (
             <div className="timeline-item__scheduled-origin" data-testid="sent-by-scheduled-task">

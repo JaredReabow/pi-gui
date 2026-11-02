@@ -95,6 +95,7 @@ export function appendQueuedUserMessage(
   transcriptCache: Map<string, readonly TranscriptMessage[]>,
   sessionRef: SessionRef,
   message: SessionQueuedMessage,
+  sentAt?: string,
 ): void {
   const key = sessionKey(sessionRef);
   const transcript = [...(transcriptCache.get(key) ?? [])];
@@ -106,7 +107,9 @@ export function appendQueuedUserMessage(
     id: message.id,
     role: "user" as const,
     text: message.text,
-    createdAt: message.createdAt,
+    // A queued message may have been written long before it starts. Its transcript
+    // timestamp is the send time used by the user-facing history caption.
+    createdAt: sentAt ?? message.createdAt,
     ...(message.attachments?.length
       ? {
           attachments: message.attachments.map((attachment) => ({ ...attachment })),
@@ -220,7 +223,7 @@ export function applyTimelineEvent(
     case "queuedMessageStarted":
       state.pendingAssistantMessageBySession.delete(key);
       clearActiveAssistantMessage(state.activeAssistantMessageBySession, event.sessionRef);
-      appendQueuedUserMessage(transcriptCache, event.sessionRef, event.message);
+      appendQueuedUserMessage(transcriptCache, event.sessionRef, event.message, event.timestamp);
       return;
     case "toolStarted": {
       clearActiveAssistantMessage(state.activeAssistantMessageBySession, event.sessionRef);
