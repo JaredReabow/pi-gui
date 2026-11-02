@@ -30,6 +30,9 @@
   sine wave, bouncing ball, stick figure, wheel, and spiral, with durable persistence.
 - Added open, partial, and closed folder states, unread and selected-thread reveal, compact
   child rows with inline age, separated child groups, and parent/child history controls.
+- Replaced the active project's generic overflow link with a project-coloured, counted
+  “N Threads hidden” disclosure. Expanding it now reliably reveals “Show less,” while
+  inactive projects retain the quieter “Show more” control.
 - Added All Threads sorting by activity, latest human input, unread state, creation time,
   and title. Activity sorting now uses the real session activity timestamp while preserving
   the established Today/Last 7 Days/Last 30 Days/Older grouping.

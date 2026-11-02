@@ -126,17 +126,18 @@ export function sidebarPreferences_previewTree<T extends SidebarTreeEntry>(
   }
   const visible = roots.filter((root) => included.has(root));
   const visibleCount = sidebarPreferences_threadCount(visible);
+  const overflow = visible.length < roots.length;
   if (expanded) {
     return {
       visible: roots,
-      overflow: visible.length < roots.length,
+      overflow,
       visibleCount: totalCount,
       totalCount,
     };
   }
   return {
     visible,
-    overflow: visible.length < roots.length,
+    overflow,
     visibleCount,
     totalCount,
   };

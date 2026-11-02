@@ -287,6 +287,27 @@ export function ChevronDownIcon() {
   );
 }
 
+export function HiddenThreadsIcon() {
+  return (
+    <Icon>
+      <path
+        d="M10 3.8v8M6.8 8.6 10 11.8l3.2-3.2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M5.2 13v2.2h9.6V13"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </Icon>
+  );
+}
+
 export function ChevronRightIcon() {
   return (
     <Icon>

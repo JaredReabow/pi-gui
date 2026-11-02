@@ -59,6 +59,7 @@ import {
   CustomizeSidebarIcon,
   ExtensionIcon,
   FolderIcon,
+  HiddenThreadsIcon,
   PinIcon,
   PlusIcon,
   RestoreIcon,
@@ -1049,6 +1050,13 @@ function WorkspaceFolderContent(
   const history = threads
     ? sidebarPreferences_previewTree(threads, folderPreference, revealKeys, historyExpanded)
     : undefined;
+  const collapsedPreview =
+    threads && folderPreference !== "open"
+      ? sidebarPreferences_previewTree(threads, folderPreference, revealKeys, false)
+      : undefined;
+  const hiddenThreadCount = collapsedPreview
+    ? collapsedPreview.totalCount - collapsedPreview.visibleCount
+    : 0;
   const folderVisible = Boolean(history && history.visible.length > 0);
   const effectiveFolderState =
     history && history.visible.length
@@ -1304,6 +1312,8 @@ function WorkspaceFolderContent(
               expanded={historyExpanded}
               label={workspace.name}
               onToggle={onToggleHistory}
+              hiddenCount={workspaceActive ? hiddenThreadCount : undefined}
+              accentColor={workspaceActive ? accentColor : undefined}
             />
           ) : null}
         </>
@@ -1525,20 +1535,42 @@ function HistoryToggle({
   expanded,
   label,
   onToggle,
+  hiddenCount,
+  accentColor,
 }: {
   readonly expanded: boolean;
   readonly label: string;
   readonly onToggle: () => void;
+  readonly hiddenCount?: number;
+  readonly accentColor?: ProjectAccentColor;
 }) {
-  const text = expanded ? "Show less" : "Show more";
+  const counted = !expanded && hiddenCount !== undefined && hiddenCount > 0;
+  const reportedCount = hiddenCount ?? 0;
+  const hiddenLabel = `${reportedCount} ${reportedCount === 1 ? "Thread" : "Threads"} hidden`;
+  const text = expanded ? "Show less" : counted ? hiddenLabel : "Show more";
+  const accessibleLabel = expanded
+    ? `Show less ${label}`
+    : counted
+      ? `Show ${reportedCount} hidden ${reportedCount === 1 ? "thread" : "threads"} in ${label}`
+      : `Show more ${label}`;
   return (
     <button
       aria-expanded={expanded}
-      aria-label={`${text} ${label}`}
-      className="thread-history-toggle"
+      aria-label={accessibleLabel}
+      className={`thread-history-toggle ${
+        counted ? "thread-history-toggle--hidden-count" : ""
+      }`.trim()}
+      data-testid={counted ? "threads-hidden-toggle" : undefined}
+      style={
+        counted && accentColor
+          ? ({ "--thread-reveal-accent": accentColor } as CSSProperties)
+          : undefined
+      }
+      title={counted ? hiddenLabel : undefined}
       type="button"
       onClick={onToggle}
     >
+      {counted ? <HiddenThreadsIcon /> : null}
       {text}
     </button>
   );

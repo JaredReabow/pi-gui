@@ -231,6 +231,31 @@
   outline-offset: -2px;
 }
 
+.thread-history-toggle--hidden-count {
+  --thread-reveal-accent: var(--accent);
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--thread-reveal-accent) 38%, var(--border-default));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--thread-reveal-accent) 6%, var(--surface));
+  color: var(--text-strong);
+  font-weight: var(--font-semibold);
+}
+
+.thread-history-toggle--hidden-count svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--thread-reveal-accent);
+}
+
+.thread-history-toggle--hidden-count:hover {
+  border-color: color-mix(in srgb, var(--thread-reveal-accent) 58%, var(--border-default));
+  background: color-mix(in srgb, var(--thread-reveal-accent) 10%, var(--surface));
+  color: var(--text-strong);
+}
+
 .icon-button,
 .sidebar__settings {
   border: 1px solid transparent;

@@ -652,7 +652,18 @@ test("folder states preserve unread reveal and complete trees across pushes and 
     await expect(nestedFolderTree).toContainText("Folder thread 1");
     await expect(nestedFolderTree).toContainText("Folder thread 2");
 
-    await alphaGroup.getByRole("button", { name: /^Show more / }).click();
+    await window.evaluate(async (ref) => {
+      const app = globalThis.window.piApp;
+      if (!app) throw new Error("piApp IPC bridge is unavailable");
+      await app.selectSession(ref);
+    }, alpha[0]!);
+    await expect(alphaGroup.locator(".workspace-row")).toHaveClass(/workspace-row--active/);
+
+    const hiddenThreads = alphaGroup.getByTestId("threads-hidden-toggle");
+    await expect(hiddenThreads).toHaveText(/^\d+ Threads? hidden$/);
+    await expect(hiddenThreads).toHaveAttribute("aria-expanded", "false");
+    await captureSidebarEvidence(window, testInfo, "folders-active-hidden-count");
+    await hiddenThreads.click();
     await expect(alphaGroup.locator(".session-row")).toHaveCount(9);
     await expect(folderRow).toHaveAttribute("data-folder-preference", "partial");
     await alphaGroup.getByRole("button", { name: /^Show less / }).click();
