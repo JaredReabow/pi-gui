@@ -47,6 +47,11 @@
 
 ### Configuration and integrations
 
+- Added a first-launch project importer for Cursor, Claude and ChatGPT. It discovers local
+  project workspace metadata, expands multi-root Cursor workspaces, reviews every candidate
+  locally, imports only selected folders, and recommends a connected model for intervention.
+  Deterministic imports contact no model; only a failed import receives a bounded, sanitized
+  summary, and the model may choose continue, skip, or one retry.
 - Restored the model-aware orchestration harness: the agent now sees `spawn_worker`,
   `list_models`, and the pi-gui thread tool names, can discover exact available
   provider/model pairs and thinking support, and can pass those values through the visible

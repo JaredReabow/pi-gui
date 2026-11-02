@@ -60,6 +60,7 @@ import {
   ExtensionIcon,
   FolderIcon,
   HiddenThreadsIcon,
+  ImportProjectsIcon,
   PinIcon,
   PlusIcon,
   RestoreIcon,
@@ -133,6 +134,7 @@ interface SidebarProps {
     action: () => Promise<DesktopAppState>,
   ) => Promise<DesktopAppState>;
   readonly onNewThread: (workspaceId?: string) => void;
+  readonly onImportProjects: () => void;
   readonly onSetActiveView: (view: AppView) => void;
   readonly onOpenSkills: (workspaceId?: string) => void;
   readonly onOpenExtensions: (workspaceId?: string) => void;
@@ -216,6 +218,7 @@ export function Sidebar(props: SidebarProps) {
     setSnapshot,
     updateSnapshot,
     onNewThread,
+    onImportProjects,
     onSetActiveView,
     onOpenSkills,
     onOpenExtensions,
@@ -617,6 +620,15 @@ export function Sidebar(props: SidebarProps) {
           >
             <FolderIcon />
             <span>Threads</span>
+          </button>
+          <button
+            className="sidebar__nav-item"
+            data-testid="sidebar-import-projects"
+            type="button"
+            onClick={onImportProjects}
+          >
+            <ImportProjectsIcon />
+            <span>Import projects</span>
           </button>
           <button
             className={`sidebar__nav-item ${activeView === "scheduled" ? "sidebar__nav-item--active" : ""}`}

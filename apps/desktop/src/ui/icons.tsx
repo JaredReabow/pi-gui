@@ -595,6 +595,26 @@ export function ForkIcon() {
   );
 }
 
+export function ImportProjectsIcon() {
+  return (
+    <Icon>
+      <path
+        d="M10 3.4v8.1M6.8 8.4 10 11.6l3.2-3.2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.45"
+      />
+      <path
+        d="M4.2 12.2v3.2c0 .7.6 1.3 1.3 1.3h9c.7 0 1.3-.6 1.3-1.3v-3.2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.45"
+      />
+    </Icon>
+  );
+}
+
 export function GripIcon() {
   return (
     <Icon>

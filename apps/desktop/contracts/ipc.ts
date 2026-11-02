@@ -32,6 +32,11 @@ import {
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "./workbench";
 import type { SetProjectAccentColorInput } from "./project-identity";
 import type {
+  ProjectImportMonitorRequest,
+  ProjectImportMonitorResult,
+  ProjectImportScanResult,
+} from "./project-import";
+import type {
   TurnChangesInput,
   TurnChangesResult,
   GetReviewInput,
@@ -149,6 +154,8 @@ export const desktopIpc = {
   workspacePicked: "pi-gui:workspace-picked",
   clipboardImagePasted: "pi-gui:clipboard-image-pasted",
   addWorkspacePath: "pi-gui:add-workspace-path",
+  scanProjectImports: "pi-gui:scan-project-imports",
+  monitorProjectImport: "pi-gui:monitor-project-import",
   pickWorkspace: "pi-gui:pick-workspace",
   selectWorkspace: "pi-gui:select-workspace",
   renameWorkspace: "pi-gui:rename-workspace",
@@ -1208,6 +1215,8 @@ export interface PiDesktopApi {
   onClipboardImagePasted(listener: (result: ClipboardImageRead) => void): () => void;
   getPathForFile(file: File): string;
   addWorkspacePath(path: string): Promise<DesktopAppState>;
+  scanProjectImports(): Promise<ProjectImportScanResult>;
+  monitorProjectImport(request: ProjectImportMonitorRequest): Promise<ProjectImportMonitorResult>;
   pickWorkspace(): Promise<DesktopAppState>;
   selectWorkspace(workspaceId: string): Promise<DesktopAppState>;
   renameWorkspace(workspaceId: string, displayName: string): Promise<DesktopAppState>;

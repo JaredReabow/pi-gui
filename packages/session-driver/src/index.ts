@@ -140,3 +140,15 @@ export {
   inlineWorker_decodeResult,
   inlineWorker_isTerminal,
 } from "./inline-worker.js";
+export type {
+  ProjectImportCandidate,
+  ProjectImportItemResult,
+  ProjectImportItemStatus,
+  ProjectImportModelOption,
+  ProjectImportMonitorRequest,
+  ProjectImportMonitorResult,
+  ProjectImportScanResult,
+  ProjectImportSource,
+  ProjectImportSourceStatus,
+} from "./project-import.js";
+export { projectImport_sanitizeMonitorText } from "./project-import.js";

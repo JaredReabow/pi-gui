@@ -112,6 +112,7 @@ export interface LaunchDesktopOptions {
   readonly initialWorkspaces?: readonly string[];
   readonly notificationLogPath?: string;
   readonly testMode?: DesktopTestMode;
+  readonly suppressProjectImportOnboarding?: boolean;
   readonly agentDir?: string;
   readonly realAuthSourceDir?: string;
   readonly enabledModels?: readonly string[];
@@ -427,6 +428,9 @@ function createDesktopHarness(
       if (requestedMode === "background") {
         await readIdentity(page);
       }
+      if (options.suppressProjectImportOnboarding !== false) {
+        await dismissProjectImportOnboarding(page);
+      }
     }
     return page;
   }
@@ -554,6 +558,18 @@ function createDesktopHarness(
     },
     close,
   };
+}
+
+async function dismissProjectImportOnboarding(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: "Not now", exact: true });
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (await button.isVisible().catch(() => false)) {
+      await button.click();
+      return;
+    }
+    await page.waitForTimeout(25);
+  }
 }
 
 function requestedTestMode(env: Readonly<Record<string, string>>): DesktopTestMode | undefined {

@@ -58,6 +58,11 @@ import {
 import type { ExtensionActionEffect, ExtensionActionRequest } from "../contracts/extension-actions";
 import type { ClipboardImageRead } from "../contracts/composer-attachments";
 import type { SetProjectAccentColorInput } from "../contracts/project-identity";
+import type {
+  ProjectImportMonitorRequest,
+  ProjectImportMonitorResult,
+  ProjectImportScanResult,
+} from "../contracts/project-import";
 import type { DesktopEditorList } from "../contracts/editors";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "../contracts/workbench";
 import type {
@@ -284,6 +289,13 @@ contextBridge.exposeInMainWorld("piApp", {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   addWorkspacePath: (workspacePath: string) =>
     ipcRenderer.invoke(desktopIpc.addWorkspacePath, workspacePath) as Promise<DesktopAppState>,
+  scanProjectImports: () =>
+    ipcRenderer.invoke(desktopIpc.scanProjectImports) as Promise<ProjectImportScanResult>,
+  monitorProjectImport: (request: ProjectImportMonitorRequest) =>
+    ipcRenderer.invoke(
+      desktopIpc.monitorProjectImport,
+      request,
+    ) as Promise<ProjectImportMonitorResult>,
   pickWorkspace: () => ipcRenderer.invoke(desktopIpc.pickWorkspace) as Promise<DesktopAppState>,
   selectWorkspace: (workspaceId: string) =>
     ipcRenderer.invoke(desktopIpc.selectWorkspace, workspaceId) as Promise<DesktopAppState>,

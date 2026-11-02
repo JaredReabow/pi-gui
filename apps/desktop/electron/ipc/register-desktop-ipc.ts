@@ -5,9 +5,18 @@ import {
   sidebarPreferences_decodeMarkRead,
 } from "../../contracts/sidebar-preferences";
 import { projectIdentity_decodeSetAccent } from "../../contracts/project-identity";
+import {
+  projectImport_decodeMonitorRequest,
+  projectImport_decodeMonitorResult,
+} from "../../contracts/project-import";
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
-import type { SessionRef } from "@pi-gui/session-driver";
+import type {
+  ProjectImportMonitorRequest,
+  ProjectImportMonitorResult,
+  ProjectImportScanResult,
+  SessionRef,
+} from "@pi-gui/session-driver";
 import type {
   ComposerAttachment,
   DesktopAppState,
@@ -219,6 +228,10 @@ export interface DesktopIpcCapabilities {
     readonly change: (request: TelemetryConsentIpcUpdate) => Promise<TelemetryConsentIpcStatus>;
   };
   readonly pickWorkspace: (window: BrowserWindow) => Promise<DesktopAppState>;
+  readonly scanProjectImports: () => Promise<ProjectImportScanResult>;
+  readonly monitorProjectImport: (
+    request: ProjectImportMonitorRequest,
+  ) => Promise<ProjectImportMonitorResult>;
   readonly createLoginCallbacks: (
     window: BrowserWindow,
   ) => Parameters<DesktopAppStore["loginProvider"]>[2];
@@ -430,6 +443,16 @@ export function registerDesktopIpc({
   ipcMain.handle(desktopIpc.addWorkspacePath, (event, rawPath: unknown) =>
     run(event, () => owners.workspace.addWorkspace(expectNonEmptyString(rawPath, "workspacePath"))),
   );
+  ipcMain.handle(desktopIpc.scanProjectImports, (event) => {
+    windows.windowForSender(event.sender);
+    return capabilities.scanProjectImports();
+  });
+  ipcMain.handle(desktopIpc.monitorProjectImport, async (event, rawRequest: unknown) => {
+    windows.windowForSender(event.sender);
+    return projectImport_decodeMonitorResult(
+      await capabilities.monitorProjectImport(projectImport_decodeMonitorRequest(rawRequest)),
+    );
+  });
   ipcMain.handle(desktopIpc.pickWorkspace, (event) =>
     capabilities.pickWorkspace(senderWindow(windows, event)),
   );

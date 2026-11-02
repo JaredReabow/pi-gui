@@ -12,7 +12,11 @@ import {
   type MenuItemConstructorOptions,
   type MessageBoxOptions,
 } from "electron";
-import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
+import {
+  isValidHttpBaseUrl,
+  listProjectImportModels,
+  monitorProjectImport,
+} from "@pi-gui/pi-sdk-driver";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import type {
@@ -69,6 +73,7 @@ import {
   telemetryConsentService_initialize,
   type TelemetryConsentService,
 } from "./distribution/telemetry-consent-service";
+import { scanProjectImports } from "./project-import/project-import-scanner";
 import { TelemetryConsentFileStore } from "./persistence/telemetry-consent-store";
 import {
   SupportService,
@@ -1387,6 +1392,20 @@ app
             }
           : {}),
         pickWorkspace: (window) => pickWorkspaceViaDialog(window),
+        scanProjectImports: async () => {
+          const scan = await scanProjectImports({
+            platform: process.platform,
+            homeDir: process.env.PI_GUI_PROJECT_IMPORT_HOME ?? app.getPath("home"),
+            appDataDir: process.env.PI_GUI_PROJECT_IMPORT_APP_DATA ?? app.getPath("appData"),
+            documentsDir: process.env.PI_GUI_PROJECT_IMPORT_DOCUMENTS ?? app.getPath("documents"),
+          });
+          const models = await listProjectImportModels(distributionDataPaths.agentData).catch(
+            () => [],
+          );
+          return { ...scan, scannedAt: new Date().toISOString(), models };
+        },
+        monitorProjectImport: (request) =>
+          monitorProjectImport(request, { agentDir: distributionDataPaths.agentData }),
         createLoginCallbacks: (window) => createRuntimeLoginCallbacks(window),
         probeCustomProviderModels,
         notificationPermission: () => notificationPermissionService,

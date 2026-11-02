@@ -94,6 +94,11 @@ import { getEffectiveModelRuntime } from "../features/settings/model-settings";
 import { applyTheme, getActiveTheme, useActiveTheme } from "../ui/active-theme";
 import { deriveWorkspaceContext } from "./workspace-context";
 import { useTreeForkModals } from "../features/conversation/hooks/use-tree-fork-modals";
+import {
+  ProjectImportOnboarding,
+  projectImportOnboarding_markSeen,
+  projectImportOnboarding_shouldPrompt,
+} from "../features/project-import/project-import-onboarding";
 import { useComposerDraftSync } from "../features/conversation/hooks/use-composer-draft-sync";
 import { useSessionComposer } from "../features/conversation/hooks/use-session-composer";
 import { useTranscriptAnnotations } from "../features/conversation/annotations/use-transcript-annotations";
@@ -137,6 +142,7 @@ export default function App() {
     readonly request: DiffPanelFileRequest;
   } | null>(null);
   const [scheduledEditor, setScheduledEditor] = useState<ScheduledEditorState | null>(null);
+  const [projectImportOpen, setProjectImportOpen] = useState(projectImportOnboarding_shouldPrompt);
   const api = window.piApp;
   const scheduledTaskStatusActions = useMemo(
     () =>
@@ -1030,6 +1036,7 @@ export default function App() {
               workspaceId ?? selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id,
             ),
           )}
+          onImportProjects={() => setProjectImportOpen(true)}
           onSetActiveView={setActiveView}
           onOpenSkills={openSkills}
           onOpenExtensions={openExtensions}
@@ -1451,6 +1458,20 @@ export default function App() {
         ) : null}
       </main>
       <SidebarDrawerBackdrop drawer={sidebarDrawer} />
+      <ProjectImportOnboarding
+        open={projectImportOpen}
+        api={api}
+        setSnapshot={setSnapshot}
+        existingWorkspacePaths={snapshot.workspaces.map((workspace) => workspace.path)}
+        onClose={() => {
+          projectImportOnboarding_markSeen();
+          setProjectImportOpen(false);
+        }}
+        onComplete={() => {
+          projectImportOnboarding_markSeen();
+          setProjectImportOpen(false);
+        }}
+      />
       {threadMenu.branchProjectPicker ? (
         <BranchProjectPicker
           state={threadMenu.branchProjectPicker}
