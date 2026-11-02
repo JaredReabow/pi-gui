@@ -5,6 +5,7 @@ import {
   emitTestSessionEvents,
   getDesktopState,
   launchDesktop,
+  launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
 } from "../helpers/electron-app";
@@ -52,7 +53,8 @@ function toolEvents(
 test("the pinned prompt remains mounted over an expanded tool group at the latest messages", async ({}, testInfo) => {
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("context-rail-group-stability");
-  const harness = await launchDesktop(userDataDir, {
+  const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
+  const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
     testMode: "background",
   });
