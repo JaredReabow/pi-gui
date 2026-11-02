@@ -5,6 +5,7 @@ import {
   emitTestSessionEvents,
   getDesktopState,
   launchDesktop,
+  launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
 } from "../helpers/electron-app";
@@ -22,7 +23,8 @@ async function selectedSessionRef(
 test("completed tool sequences compact by default and expand without hiding failures or running work", async ({}, testInfo) => {
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("tool-group-compaction");
-  const harness = await launchDesktop(userDataDir, {
+  const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
+  const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
     testMode: "background",
   });
