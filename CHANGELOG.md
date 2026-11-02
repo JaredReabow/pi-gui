@@ -12,6 +12,9 @@
   queue becomes empty.
 - Kept pre-compaction messages and tool calls visible, pinned the prompt responsible for
   the response currently in view, and compacted completed tool rows without hiding failures.
+- Collapsed adjacent successfully completed tool calls into one summary row that reports the
+  action count and tool mix, with controls to restore the original rows. Running tools,
+  failures and image results remain visible while collapsed.
 - Added the selectable running indicator styles, with the moonwalk pair as the default.
 
 ### Sidebar and navigation

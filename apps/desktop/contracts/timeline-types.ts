@@ -36,6 +36,16 @@ export interface TimelineToolCall {
   readonly output?: unknown;
 }
 
+/** A compact, view-only group of adjacent successfully completed tool calls. */
+export interface TimelineToolGroup {
+  readonly kind: "tool-group";
+  readonly id: string;
+  readonly createdAt: string;
+  readonly label: string;
+  readonly metadata: string;
+  readonly items: readonly TimelineToolCall[];
+}
+
 export interface TimelineSummary {
   readonly kind: "summary";
   readonly id: string;
@@ -90,4 +100,8 @@ export interface TimelineWorkingIndicator {
 }
 
 export type DisplayTimelineItem =
-  TimelineTranscriptItem | TimelineTurnMarker | TimelineTurnChanges | TimelineWorkingIndicator;
+  | TimelineTranscriptItem
+  | TimelineToolGroup
+  | TimelineTurnMarker
+  | TimelineTurnChanges
+  | TimelineWorkingIndicator;

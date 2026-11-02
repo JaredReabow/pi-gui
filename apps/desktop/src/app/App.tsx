@@ -1199,6 +1199,7 @@ export default function App() {
                   <ConversationTimeline
                     key={selectedSessionKey}
                     transcript={pins.timeline}
+                    timelineRows={timelineRows}
                     running={selectedSessionRunning}
                     isTranscriptLoading={isTranscriptLoading}
                     transcriptFailed={transcriptFailed}

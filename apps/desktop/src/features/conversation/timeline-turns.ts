@@ -4,6 +4,7 @@ import type {
   TimelineTranscriptItem,
   TimelineTurnMarker,
 } from "../../../contracts/timeline-types";
+import { compactCompletedToolGroups } from "./timeline-tool-groups";
 
 const MIN_WORKED_DURATION_MS = 1_000;
 
@@ -97,7 +98,7 @@ export function buildDisplayTimelineItems(
 
   const cardsAfter = turnChangeCardPositions(transcript, options.turnChanges ?? []);
   if (markersBefore.size === 0 && cardsAfter.size === 0 && !options.lastTurnRunning) {
-    return transcript;
+    return compactCompletedToolGroups(transcript);
   }
 
   const result: DisplayTimelineItem[] = [];
@@ -117,7 +118,7 @@ export function buildDisplayTimelineItems(
   if (options.lastTurnRunning) {
     result.push({ kind: "working", id: "working-indicator", startedAt: options.runningSince });
   }
-  return result;
+  return compactCompletedToolGroups(result);
 }
 
 function turnChangeCardPositions(

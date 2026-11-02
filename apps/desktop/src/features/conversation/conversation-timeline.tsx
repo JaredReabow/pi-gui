@@ -41,6 +41,7 @@ interface ThreadSearchModel {
 }
 interface ConversationTimelineProps {
   readonly transcript: readonly TimelineTranscriptItem[];
+  readonly timelineRows: readonly DisplayTimelineItem[];
   /** A run with nothing in the transcript yet still shows its Working line, not the empty state. */
   readonly running: boolean;
   readonly isTranscriptLoading: boolean;
@@ -62,6 +63,7 @@ interface ConversationTimelineProps {
 const NO_MARKERS: readonly AnnotationMarker[] = [];
 export function ConversationTimeline({
   transcript,
+  timelineRows,
   running,
   isTranscriptLoading,
   transcriptFailed = null,
@@ -103,9 +105,20 @@ export function ConversationTimeline({
     return markers;
   }, [annotationList]);
   const [expandedToolCallIds, setExpandedToolCallIds] = useState<Set<string>>(() => new Set());
+  const [expandedToolGroupIds, setExpandedToolGroupIds] = useState<Set<string>>(() => new Set());
   const toggleToolCall = useCallback(
     (id: string) =>
       setExpandedToolCallIds((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const toggleToolGroup = useCallback(
+    (id: string) =>
+      setExpandedToolGroupIds((current) => {
         const next = new Set(current);
         if (next.has(id)) next.delete(id);
         else next.add(id);
@@ -122,6 +135,15 @@ export function ConversationTimeline({
       return new Set([...current].filter((id) => available.has(id)));
     });
   }, [transcript]);
+  useLayoutEffect(() => {
+    const available = new Set(
+      timelineRows.flatMap((item) => (item.kind === "tool-group" ? [item.id] : [])),
+    );
+    setExpandedToolGroupIds((current) => {
+      if ([...current].every((id) => available.has(id))) return current;
+      return new Set([...current].filter((id) => available.has(id)));
+    });
+  }, [timelineRows]);
   const renderedMessageIndexById = useMemo(() => {
     const indices = new Map<string, number>();
     let index = 0;
@@ -189,6 +211,8 @@ export function ConversationTimeline({
                     generation={viewport.layoutGeneration}
                     expandedToolCallIds={expandedToolCallIds}
                     onToggleToolCall={toggleToolCall}
+                    expandedToolGroupIds={expandedToolGroupIds}
+                    onToggleToolGroup={toggleToolGroup}
                     onViewFileInDiff={onViewFileInDiff}
                     onOpenTurnChange={onOpenTurnChange}
                     sourceMessageIndex={renderedMessageIndexById.get(item.id)}
@@ -347,6 +371,8 @@ interface MeasuredTimelineItemProps {
   readonly generation: number;
   readonly expandedToolCallIds: ReadonlySet<string>;
   readonly onToggleToolCall: (callId: string) => void;
+  readonly expandedToolGroupIds: ReadonlySet<string>;
+  readonly onToggleToolGroup: (groupId: string) => void;
   readonly onViewFileInDiff?: (path: string) => void;
   readonly onOpenTurnChange?: OpenTurnChange;
   readonly sourceMessageIndex?: number;
@@ -368,6 +394,8 @@ function MeasuredTimelineItemBase({
   generation,
   expandedToolCallIds,
   onToggleToolCall,
+  expandedToolGroupIds,
+  onToggleToolGroup,
   onViewFileInDiff,
   onOpenTurnChange,
   sourceMessageIndex,
@@ -416,6 +444,8 @@ function MeasuredTimelineItemBase({
           item={item}
           expandedToolCallIds={expandedToolCallIds}
           onToggleToolCall={onToggleToolCall}
+          expandedToolGroupIds={expandedToolGroupIds}
+          onToggleToolGroup={onToggleToolGroup}
           onViewFileInDiff={onViewFileInDiff}
           onOpenTurnChange={onOpenTurnChange}
           sourceMessageIndex={sourceMessageIndex}
@@ -465,6 +495,9 @@ function isSameDisplayItem(a: DisplayTimelineItem, b: DisplayTimelineItem): bool
       a.metadata === b.metadata
     );
   }
+  if (a.kind === "tool-group" && b.kind === "tool-group") {
+    return sameRowContent(a, b);
+  }
   if (a.kind === "activity" && b.kind === "activity") {
     return (
       a.label === b.label && a.detail === b.detail && a.metadata === b.metadata && a.tone === b.tone
@@ -507,6 +540,8 @@ function areMeasuredTimelineItemPropsEqual(
     prev.onHeightChange === next.onHeightChange &&
     prev.expandedToolCallIds === next.expandedToolCallIds &&
     prev.onToggleToolCall === next.onToggleToolCall &&
+    prev.expandedToolGroupIds === next.expandedToolGroupIds &&
+    prev.onToggleToolGroup === next.onToggleToolGroup &&
     prev.onViewFileInDiff === next.onViewFileInDiff &&
     prev.onOpenTurnChange === next.onOpenTurnChange &&
     prev.sourceMessageIndex === next.sourceMessageIndex &&

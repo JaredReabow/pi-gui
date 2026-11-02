@@ -8,6 +8,7 @@ import type {
   TimelineActivity,
   TimelineToolCall,
   TimelineSummary,
+  TimelineToolGroup,
   TimelineTurnMarker,
   TimelineWorkingIndicator,
 } from "../../../contracts/timeline-types";
@@ -52,6 +53,8 @@ export function TimelineItem({
   item,
   expandedToolCallIds,
   onToggleToolCall,
+  expandedToolGroupIds,
+  onToggleToolGroup,
   onViewFileInDiff,
   sourceMessageIndex,
   onForkFromMessage,
@@ -66,6 +69,8 @@ export function TimelineItem({
   readonly item: DisplayTimelineItem;
   readonly expandedToolCallIds?: ReadonlySet<string>;
   readonly onToggleToolCall?: (callId: string) => void;
+  readonly expandedToolGroupIds?: ReadonlySet<string>;
+  readonly onToggleToolGroup?: (groupId: string) => void;
   readonly onViewFileInDiff?: (path: string) => void;
   readonly sourceMessageIndex?: number;
   readonly onForkFromMessage?: (messageIndex: number, preview?: string) => void;
@@ -105,6 +110,17 @@ export function TimelineItem({
           item={item}
           expanded={expandedToolCallIds?.has(item.callId) ?? false}
           onToggle={onToggleToolCall}
+          onViewFileInDiff={onViewFileInDiff}
+        />
+      );
+    case "tool-group":
+      return (
+        <TimelineToolGroupItem
+          item={item}
+          expanded={expandedToolGroupIds?.has(item.id) ?? false}
+          expandedToolCallIds={expandedToolCallIds}
+          onToggleGroup={onToggleToolGroup}
+          onToggleTool={onToggleToolCall}
           onViewFileInDiff={onViewFileInDiff}
         />
       );
@@ -332,6 +348,69 @@ function TimelineActivityItem({ item }: { readonly item: TimelineActivity }) {
       {item.detail ? <span className="timeline-activity__detail">{item.detail}</span> : null}
       {item.metadata ? <span className="timeline-activity__meta">{item.metadata}</span> : null}
     </div>
+  );
+}
+
+function TimelineToolGroupItem({
+  item,
+  expanded,
+  expandedToolCallIds,
+  onToggleGroup,
+  onToggleTool,
+  onViewFileInDiff,
+}: {
+  readonly item: TimelineToolGroup;
+  readonly expanded: boolean;
+  readonly expandedToolCallIds?: ReadonlySet<string>;
+  readonly onToggleGroup?: (groupId: string) => void;
+  readonly onToggleTool?: (callId: string) => void;
+  readonly onViewFileInDiff?: (path: string) => void;
+}) {
+  return (
+    <article
+      className="timeline-tool-group"
+      data-testid="timeline-tool-group"
+      data-tool-group-id={item.id}
+    >
+      <button
+        className="timeline-tool-group__header"
+        type="button"
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${item.label}: ${item.metadata}`}
+        onClick={() => onToggleGroup?.(item.id)}
+      >
+        <span
+          className={`timeline-tool-group__chevron ${
+            expanded ? "timeline-tool-group__chevron--expanded" : ""
+          }`}
+          aria-hidden="true"
+        >
+          <ChevronRightIcon />
+        </span>
+        <span className="timeline-tool-group__glyph" aria-hidden="true">
+          <SparkIcon />
+        </span>
+        <span className="timeline-tool-group__label">{item.label}</span>
+        <span className="timeline-tool-group__metadata">{item.metadata}</span>
+        <span className="timeline-tool-group__status" aria-label="Completed">
+          <span className="timeline-tool-group__status-pip" aria-hidden="true" />
+          done
+        </span>
+      </button>
+      {expanded ? (
+        <div className="timeline-tool-group__body">
+          {item.items.map((tool) => (
+            <TimelineToolCallItem
+              key={tool.id}
+              item={tool}
+              expanded={expandedToolCallIds?.has(tool.callId) ?? false}
+              onToggle={onToggleTool}
+              onViewFileInDiff={onViewFileInDiff}
+            />
+          ))}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
