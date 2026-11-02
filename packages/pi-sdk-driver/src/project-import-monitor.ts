@@ -14,6 +14,7 @@ import {
   type ProjectImportMonitorRequest,
   type ProjectImportMonitorResult,
 } from "@pi-gui/session-driver";
+import { CustomProviderStore } from "./custom-provider-store.js";
 import { projectImportMonitor_decodeDecision } from "./project-import-monitor-decision.js";
 import { messageText as sessionMessageText } from "./session-supervisor-utils.js";
 
@@ -25,10 +26,18 @@ const MONITOR_SYSTEM_PROMPT = [
   'Return only JSON: {"action":"continue|retry|skip","message":"one short sentence"}.',
 ].join("\n");
 
+export interface ProjectImportModelRuntimeDeps {
+  readonly agentDir: string;
+  /** Shared Pi CLI model catalog read by the desktop runtime. */
+  readonly modelsPath?: string;
+  /** pi-gui's private models.json, used only for custom endpoint registration. */
+  readonly privateModelsPath?: string;
+}
+
 export async function listProjectImportModels(
-  agentDir: string,
+  deps: ProjectImportModelRuntimeDeps,
 ): Promise<readonly ProjectImportModelOption[]> {
-  const runtime = await createModelRuntime(agentDir);
+  const runtime = await createModelRuntime(deps);
   const available = await runtime.getAvailable();
   return available
     .map((model) => ({
@@ -45,10 +54,10 @@ export async function listProjectImportModels(
 
 export async function monitorProjectImport(
   request: ProjectImportMonitorRequest,
-  deps: { readonly agentDir: string },
+  deps: ProjectImportModelRuntimeDeps,
 ): Promise<ProjectImportMonitorResult> {
   try {
-    const modelRuntime = await createModelRuntime(deps.agentDir);
+    const modelRuntime = await createModelRuntime(deps);
     const model = modelRuntime.getModel(request.model.provider, request.model.modelId);
     if (!model || !(await modelRuntime.getAuth(model))) {
       return unavailable("The selected monitoring model is not connected.");
@@ -82,12 +91,18 @@ export async function monitorProjectImport(
   }
 }
 
-async function createModelRuntime(agentDir: string): Promise<ModelRuntime> {
+async function createModelRuntime(deps: ProjectImportModelRuntimeDeps): Promise<ModelRuntime> {
   const runtime = await ModelRuntime.create({
-    authPath: join(agentDir, "auth.json"),
-    modelsPath: join(agentDir, "models.json"),
+    authPath: join(deps.agentDir, "auth.json"),
+    modelsPath: deps.modelsPath ?? join(deps.agentDir, "models.json"),
     refreshOnCreate: false,
   });
+  if (
+    deps.privateModelsPath &&
+    deps.privateModelsPath !== (deps.modelsPath ?? join(deps.agentDir, "models.json"))
+  ) {
+    await new CustomProviderStore(deps.privateModelsPath).registerInto(runtime);
+  }
   await runtime.refresh({ allowNetwork: false });
   return runtime;
 }

@@ -36,6 +36,7 @@ import {
 } from "./session-supervisor.js";
 import { RuntimeSupervisor, type RuntimeSupervisorOptions } from "./runtime-supervisor.js";
 import { createRuntimeDependencies } from "./runtime-deps.js";
+import type { CustomProviderStore } from "./custom-provider-store.js";
 import { generateThreadTitle, type GenerateThreadTitleOptions } from "./thread-title-generator.js";
 
 export interface PiSdkDriverConfig extends PiSdkDriverOptions, RuntimeSupervisorOptions {}
@@ -43,6 +44,9 @@ export interface PiSdkDriverConfig extends PiSdkDriverOptions, RuntimeSupervisor
 export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability {
   private readonly supervisor: SessionSupervisor;
   private readonly agentDir: string;
+  private readonly modelsJsonPath: string;
+  private readonly privateModelsJsonPath: string;
+  private readonly customProviderStore: CustomProviderStore;
   private readonly generateThreadTitleOverride:
     | ((
         workspace: WorkspaceRef,
@@ -54,6 +58,9 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
   constructor(options: PiSdkDriverConfig = {}) {
     const deps = createRuntimeDependencies(options);
     this.agentDir = deps.agentDir;
+    this.modelsJsonPath = deps.modelsJsonPath;
+    this.privateModelsJsonPath = deps.privateModelsJsonPath;
+    this.customProviderStore = deps.customProviderStore;
     this.generateThreadTitleOverride = options.generateThreadTitleOverride;
 
     this.supervisor = new SessionSupervisor({ ...options, agentDir: deps.agentDir });
@@ -233,11 +240,17 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
             ? override
             : generateThreadTitle(workspace, options, {
                 agentDir: this.agentDir,
+                modelsJsonPath: this.modelsJsonPath,
+                privateModelsJsonPath: this.privateModelsJsonPath,
+                customProviderStore: this.customProviderStore,
               }),
       );
     }
     return generateThreadTitle(workspace, options, {
       agentDir: this.agentDir,
+      modelsJsonPath: this.modelsJsonPath,
+      privateModelsJsonPath: this.privateModelsJsonPath,
+      customProviderStore: this.customProviderStore,
     });
   }
 }

@@ -219,6 +219,7 @@ export interface DesktopAppStoreOptions {
     PiSdkDriverConfig,
     | "builtinExtensions"
     | "desktopExtensions"
+    | "modelCatalogPath"
     | "onTurnCaptureBoundary"
     | "openUrl"
     | "turnCaptureTimeoutMs"
@@ -275,10 +276,9 @@ export class DesktopAppStore {
   /** Per-workspace serial queue so focus reconciles never overlap or race. */
   private readonly externalChangeQueues = new Map<string, Promise<void>>();
   /**
-   * Last-seen `mtimeMs` per watched settings file (global + per-workspace). Focus
-   * reconcile reloads runtime only when a file's mtime moved since the last check,
-   * and the app records its own settings writes here so a self-write is never
-   * mistaken for an external edit (which would clobber the just-applied selection).
+   * Last-seen `mtimeMs` per model-defining input: global/workspace settings and
+   * the shared Pi CLI model catalog. Self-written settings baselines prevent an
+   * external-edit refresh from clobbering the just-applied selection.
    */
   private readonly settingsFileMtimes = new Map<string, number>();
   /**
@@ -3070,18 +3070,20 @@ export class DesktopAppStore {
   }
 
   /**
-   * Stat the global and per-workspace settings files and reload the runtime only
-   * when one changed since the last check. Cheap (a couple of stats per focus)
-   * and reload-storm-free: the first check just seeds the baseline, and the app's
-   * own settings writes update the baseline (see {@link recordSettingsSelfWrite})
-   * so a self-write never triggers a refresh that would clobber the selection.
+   * Stat model-defining inputs and reload the runtime only when one changed.
+   * Reading Codex Router's shared catalog here lets its publications reach the
+   * isolated pi-gui runtime while private settings and auth remain separate.
    */
   private async reloadSettingsIfChangedOnFocus(workspaceId: string): Promise<void> {
     const workspacePath = this.state.workspaces.find((entry) => entry.id === workspaceId)?.path;
     if (!workspacePath) {
       return;
     }
-    const files = [resolveGlobalSettingsPath(), join(workspacePath, ".pi", "settings.json")];
+    const files = [
+      resolveGlobalSettingsPath(),
+      join(workspacePath, ".pi", "settings.json"),
+      this.driver.runtimeSupervisor.modelCatalogPath,
+    ];
     let changed = false;
     for (const file of files) {
       const mtimeMs = await statMtimeMs(file);
@@ -3232,7 +3234,11 @@ export class DesktopAppStore {
   }
 
   private async seedSettingsMtimeBaseline(workspacePath: string): Promise<void> {
-    for (const file of [resolveGlobalSettingsPath(), join(workspacePath, ".pi", "settings.json")]) {
+    for (const file of [
+      resolveGlobalSettingsPath(),
+      join(workspacePath, ".pi", "settings.json"),
+      this.driver.runtimeSupervisor.modelCatalogPath,
+    ]) {
       if (this.settingsFileMtimes.has(file)) {
         continue;
       }

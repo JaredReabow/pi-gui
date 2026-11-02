@@ -1,11 +1,14 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createNamedThread,
   getDesktopState,
   launchDesktop,
+  launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
+  seedAgentDir,
   triggerWindowActivation,
 } from "../helpers/electron-app";
 import {
@@ -13,6 +16,8 @@ import {
   createSessionFileBeside,
   sessionFilePathFromCatalog,
 } from "../helpers/session-file";
+
+const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
 
 /**
  * Acceptance test for CLI ↔ GUI sync in the Codex-style model (no live file
@@ -26,7 +31,7 @@ test("reflects an external append to the selected session's JSONL on window focu
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("cli-sync-workspace");
 
-  const harness = await launchDesktop(userDataDir, {
+  const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
     testMode: "background",
   });
@@ -100,7 +105,7 @@ test("surfaces a CLI-created session on window focus", async () => {
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("cli-new-session-workspace");
 
-  const harness = await launchDesktop(userDataDir, {
+  const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
     testMode: "background",
   });
@@ -150,6 +155,82 @@ test("surfaces a CLI-created session on window focus", async () => {
         { timeout: 20_000 },
       )
       .toBeGreaterThan(1);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("reads Codex Router's shared model catalog on startup and refresh", async () => {
+  test.setTimeout(90_000);
+  const userDataDir = await makeUserDataDir("pi-gui-shared-catalog-focus-");
+  const agentDir = join(userDataDir, "private-agent");
+  const sharedAgentDir = join(userDataDir, "shared-pi-agent");
+  const workspacePath = await makeWorkspace("shared-model-catalog-workspace");
+  const sharedModelsPath = join(sharedAgentDir, "models.json");
+  await seedAgentDir(agentDir, {
+    enabledModels: ["router-focus/initial", "router-focus/added"],
+  });
+  await mkdir(sharedAgentDir, { recursive: true });
+
+  const writeCatalog = async (modelIds: readonly string[], futureMs = 0) => {
+    await writeFile(
+      sharedModelsPath,
+      JSON.stringify({
+        providers: {
+          "router-focus": {
+            baseUrl: "http://127.0.0.1:9/v1",
+            api: "openai-completions",
+            apiKey: "shared-catalog-key",
+            models: modelIds.map((id) => ({
+              id,
+              name: id,
+              reasoning: false,
+              input: ["text"],
+            })),
+          },
+        },
+      }),
+    );
+    if (futureMs > 0) {
+      const stamp = new Date(Date.now() + futureMs);
+      await utimes(sharedModelsPath, stamp, stamp);
+    }
+  };
+  await writeCatalog(["initial"]);
+
+  const harness = await launch(userDataDir, {
+    agentDir,
+    initialWorkspaces: [workspacePath],
+    testMode: "background",
+    envOverrides: {
+      PI_GUI_SHARED_PI_AGENT_DIR: sharedAgentDir,
+    },
+  });
+
+  try {
+    const window = await harness.firstWindow();
+    const state = await getDesktopState(window);
+    const workspaceId = state.selectedWorkspaceId;
+    if (!workspaceId) throw new Error("Expected a selected workspace");
+    const privateSettingsPath = join(agentDir, "settings.json");
+    const privateAuthPath = join(agentDir, "auth.json");
+    const privateSettings = await readFile(privateSettingsPath, "utf8");
+    const privateAuth = await readFile(privateAuthPath, "utf8");
+
+    const modelIds = async () =>
+      (await getDesktopState(window)).runtimeByWorkspace[workspaceId]?.models
+        .filter((model) => model.providerId === "router-focus")
+        .map((model) => model.modelId) ?? [];
+    await expect.poll(modelIds).toEqual(["initial"]);
+
+    await writeCatalog(["initial", "added"], 2_000);
+    await expect.poll(modelIds).toEqual(["initial"]);
+
+    await triggerWindowActivation(harness);
+    await expect.poll(modelIds).toEqual(["added", "initial"]);
+
+    expect(await readFile(privateSettingsPath, "utf8")).toBe(privateSettings);
+    expect(await readFile(privateAuthPath, "utf8")).toBe(privateAuth);
   } finally {
     await harness.close();
   }

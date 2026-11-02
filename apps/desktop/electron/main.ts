@@ -69,6 +69,7 @@ import { distributionResolveDataPaths } from "@pi-gui/distribution-config/node";
 import { supportResolveOptionUrl } from "@pi-gui/distribution-support";
 import { createDistributionTelemetryRuntime } from "./distribution/telemetry-runtime";
 import type { DistributionTelemetryIntegration } from "./distribution/telemetry-integration";
+import { sharedPiCatalog_resolveModelsPath } from "./distribution/shared-pi-catalog";
 import {
   telemetryConsentService_initialize,
   type TelemetryConsentService,
@@ -1044,6 +1045,11 @@ const distributionDataPaths = distributionResolveDataPaths({
   userDataDirectoryOverride: process.env.PI_APP_USER_DATA_DIR,
   agentDataDirectoryOverride: process.env.PI_CODING_AGENT_DIR,
 });
+const sharedPiModelsPath = sharedPiCatalog_resolveModelsPath({
+  homeDir: app.getPath("home"),
+  agentDir: process.env.PI_GUI_SHARED_PI_AGENT_DIR,
+});
+const privatePiModelsPath = path.join(distributionDataPaths.agentData, "models.json");
 
 app.setName(distributionProfile.identity.appName);
 const configuredUserDataDir = distributionDataPaths.userData;
@@ -1169,6 +1175,7 @@ app
     const driverOptions: NonNullable<
       ConstructorParameters<typeof DesktopAppStore>[0]["driverOptions"]
     > = {
+      modelCatalogPath: sharedPiModelsPath,
       onTurnCaptureBoundary: (boundary, signal) => checkpoints.recordBoundary(boundary, signal),
       // The store bounds each capture from when it starts; this only stops a stuck boundary,
       // including one waiting behind another run's capture in the same checkout.
@@ -1399,13 +1406,19 @@ app
             appDataDir: process.env.PI_GUI_PROJECT_IMPORT_APP_DATA ?? app.getPath("appData"),
             documentsDir: process.env.PI_GUI_PROJECT_IMPORT_DOCUMENTS ?? app.getPath("documents"),
           });
-          const models = await listProjectImportModels(distributionDataPaths.agentData).catch(
-            () => [],
-          );
+          const models = await listProjectImportModels({
+            agentDir: distributionDataPaths.agentData,
+            modelsPath: sharedPiModelsPath,
+            privateModelsPath: privatePiModelsPath,
+          }).catch(() => []);
           return { ...scan, scannedAt: new Date().toISOString(), models };
         },
         monitorProjectImport: (request) =>
-          monitorProjectImport(request, { agentDir: distributionDataPaths.agentData }),
+          monitorProjectImport(request, {
+            agentDir: distributionDataPaths.agentData,
+            modelsPath: sharedPiModelsPath,
+            privateModelsPath: privatePiModelsPath,
+          }),
         createLoginCallbacks: (window) => createRuntimeLoginCallbacks(window),
         probeCustomProviderModels,
         notificationPermission: () => notificationPermissionService,

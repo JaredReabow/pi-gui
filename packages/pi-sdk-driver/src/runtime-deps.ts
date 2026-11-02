@@ -6,6 +6,7 @@ import type { RuntimeSupervisorOptions } from "./runtime-supervisor.js";
 export interface RuntimeDependencies {
   readonly agentDir: string;
   readonly modelsJsonPath: string;
+  readonly privateModelsJsonPath: string;
   readonly authPath: string;
   readonly customProviderStore: CustomProviderStore;
 }
@@ -14,13 +15,17 @@ export function createRuntimeDependencies(
   options: RuntimeSupervisorOptions = {},
 ): RuntimeDependencies {
   const agentDir = resolve(options.agentDir ?? getAgentDir());
-  const modelsJsonPath = join(agentDir, "models.json");
+  const privateModelsJsonPath = join(agentDir, "models.json");
+  const modelsJsonPath = options.modelCatalogPath
+    ? resolve(options.modelCatalogPath)
+    : privateModelsJsonPath;
   const authPath = join(agentDir, "auth.json");
   const customProviderStore =
-    options.customProviderStore ?? new CustomProviderStore(modelsJsonPath);
+    options.customProviderStore ?? new CustomProviderStore(privateModelsJsonPath);
   return {
     agentDir,
     modelsJsonPath,
+    privateModelsJsonPath,
     authPath,
     customProviderStore,
   };

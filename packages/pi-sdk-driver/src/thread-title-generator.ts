@@ -9,6 +9,7 @@ import {
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import type { SessionModelSelection, WorkspaceRef } from "@pi-gui/session-driver";
+import type { CustomProviderStore } from "./custom-provider-store.js";
 import { messageText as sessionMessageText } from "./session-supervisor-utils.js";
 
 export interface GenerateThreadTitleOptions {
@@ -20,6 +21,9 @@ export interface GenerateThreadTitleOptions {
 
 interface ThreadTitleGeneratorDeps {
   readonly agentDir: string;
+  readonly modelsJsonPath: string;
+  readonly privateModelsJsonPath: string;
+  readonly customProviderStore: CustomProviderStore;
 }
 
 const MAX_THREAD_TITLE_LENGTH = 36;
@@ -49,9 +53,12 @@ export async function generateThreadTitle(
   const resourceLoader = createThreadTitleResourceLoader();
   const modelRuntime = await ModelRuntime.create({
     authPath: join(deps.agentDir, "auth.json"),
-    modelsPath: join(deps.agentDir, "models.json"),
+    modelsPath: deps.modelsJsonPath,
     refreshOnCreate: false,
   });
+  if (deps.modelsJsonPath !== deps.privateModelsJsonPath) {
+    await deps.customProviderStore.registerInto(modelRuntime);
+  }
   await modelRuntime.refresh({ allowNetwork: false });
 
   const createOptions: CreateAgentSessionOptions = {

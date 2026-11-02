@@ -30,6 +30,11 @@ interface ModelsJson extends Record<string, unknown> {
   providers?: Record<string, unknown>;
 }
 
+interface CustomProviderRuntimeTarget {
+  getProvider(providerId: string): unknown;
+  registerProvider(providerId: string, config: Record<string, unknown>): unknown;
+}
+
 export class CustomProviderStore {
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -78,6 +83,21 @@ export class CustomProviderStore {
     });
   }
 
+  /**
+   * Adds pi-gui's private custom endpoints to a runtime built from the shared
+   * model catalog. The shared catalog remains read-only and wins ID conflicts.
+   */
+  async registerInto(runtime: CustomProviderRuntimeTarget): Promise<void> {
+    for (const entry of await this.list()) {
+      if (runtime.getProvider(entry.providerId)) {
+        throw new Error(
+          `Custom provider "${entry.providerId}" conflicts with the shared model catalog.`,
+        );
+      }
+      runtime.registerProvider(entry.providerId, toProviderConfig(entry));
+    }
+  }
+
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const next = this.queue.then(task, task);
     this.queue = next.catch(() => undefined);
@@ -117,7 +137,11 @@ function toProviderConfig(input: CustomProviderInput): Record<string, unknown> {
     apiKey: trimmedKey ? trimmedKey : CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
     [PI_GUI_CUSTOM_PROVIDER_MARKER]: true,
     models: input.models.map((model) => {
-      const entry: Record<string, unknown> = { id: model.id };
+      const entry: Record<string, unknown> = {
+        id: model.id,
+        input: ["text"],
+        reasoning: false,
+      };
       if (model.contextWindow !== undefined) {
         entry.contextWindow = model.contextWindow;
       }

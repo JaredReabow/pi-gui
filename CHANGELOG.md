@@ -52,6 +52,10 @@
 
 ### Configuration and integrations
 
+- pi-gui now reads `~/.pi/agent/models.json` as Codex Router's shared, read-only model
+  catalog while retaining its isolated auth, settings, sessions, and custom endpoint store.
+  Router publications are picked up on app focus, so newly published models appear without
+  restarting or manually copying catalog entries.
 - Fixed `create_child_thread` and `spawn_worker` model normalization when the host supplies
   the legacy `selection` field beside the documented top-level `model` and `thinkingLevel`.
   The top-level model remains authoritative, while `thinkingLevel` can combine with the

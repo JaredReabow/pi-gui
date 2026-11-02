@@ -113,6 +113,8 @@ interface RuntimeContext {
 
 export interface RuntimeSupervisorOptions {
   readonly agentDir?: string;
+  /** Read-only Pi CLI models.json. Auth, settings and custom providers remain private. */
+  readonly modelCatalogPath?: string;
   readonly builtinExtensions?: readonly BuiltinExtension[];
   readonly isBuiltinExtensionEnabled?: BuiltinExtensionEnabled;
   readonly customProviderStore?: CustomProviderStore;
@@ -129,6 +131,7 @@ interface PackageMetadata {
 export class RuntimeSupervisor implements RuntimeResourceDriver {
   private readonly agentDir: string;
   private readonly modelsJsonPath: string;
+  private readonly privateModelsJsonPath: string;
   private readonly authPath: string;
   private readonly builtinExtensions: readonly BuiltinExtension[];
   private readonly isBuiltinExtensionEnabled: BuiltinExtensionEnabled;
@@ -139,10 +142,15 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     const deps = createRuntimeDependencies(options);
     this.agentDir = deps.agentDir;
     this.modelsJsonPath = deps.modelsJsonPath;
+    this.privateModelsJsonPath = deps.privateModelsJsonPath;
     this.authPath = deps.authPath;
     this.builtinExtensions = options.builtinExtensions ?? [];
     this.isBuiltinExtensionEnabled = options.isBuiltinExtensionEnabled ?? (() => true);
     this.customProviderStore = deps.customProviderStore;
+  }
+
+  get modelCatalogPath(): string {
+    return this.modelsJsonPath;
   }
 
   async getRuntimeSnapshot(workspace: WorkspaceRef): Promise<RuntimeSnapshot> {
@@ -223,6 +231,9 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     input: CustomProviderInput,
   ): Promise<RuntimeSnapshot> {
     const context = await this.ensureContext(workspace);
+    const customProviderIds = new Set(
+      (await this.customProviderStore.list()).map((provider) => provider.providerId),
+    );
     const oauthProviderIds = new Set(
       context.modelRuntime
         .getProviders()
@@ -232,6 +243,14 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     if (BUILT_IN_PROVIDER_IDS.has(input.providerId) || oauthProviderIds.has(input.providerId)) {
       throw new Error(
         `Provider ID "${input.providerId}" conflicts with a built-in provider. Pick a unique ID.`,
+      );
+    }
+    if (
+      context.modelRuntime.getProvider(input.providerId) &&
+      !customProviderIds.has(input.providerId)
+    ) {
+      throw new Error(
+        `Provider ID "${input.providerId}" conflicts with an existing runtime provider. Pick a unique ID.`,
       );
     }
     await this.customProviderStore.set(input);
@@ -689,6 +708,9 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       modelsPath: this.modelsJsonPath,
       refreshOnCreate: false,
     });
+    if (this.modelsJsonPath !== this.privateModelsJsonPath) {
+      await this.customProviderStore.registerInto(runtime);
+    }
     const accepted: ExtensionProviderRegistration[] = [];
     for (const registration of registrations) {
       const { name, config, extensionPath } = registration;
