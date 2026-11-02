@@ -9,6 +9,7 @@ import type { OrchestrationChildThread } from "../../contracts/desktop-state";
 import { childModelSelection_createOptions } from "../../electron/orchestration/child-model-selection";
 import { createOrchestrationOwner } from "../../electron/orchestration/app-store-orchestration";
 import {
+  createChildThreadSelectionFromParams,
   createOrchestrationRuntimeTools,
   type OrchestrationRuntimeBridge,
 } from "../../electron/orchestration/orchestration-runtime";
@@ -59,6 +60,50 @@ function resolved(
 ): CreateSessionOptions {
   return childModelSelection_createOptions(effective, selection, baseOptions);
 }
+
+test("documented model arguments tolerate a host-added legacy selection", () => {
+  const legacySelection = {
+    provider: "provider-b",
+    modelId: "plain-b",
+    thinkingLevel: "low",
+  } as const;
+
+  expect(
+    createChildThreadSelectionFromParams({
+      prompt: "top-level selection wins",
+      model: "codex-router/deepseek/deepseek-v4.1-flash",
+      thinkingLevel: "high",
+      selection: legacySelection,
+    }),
+  ).toEqual({
+    provider: "codex-router",
+    modelId: "deepseek/deepseek-v4.1-flash",
+    thinkingLevel: "high",
+  });
+  expect(
+    createChildThreadSelectionFromParams({
+      prompt: "thinking with legacy model identity",
+      thinkingLevel: "xhigh",
+      selection: { provider: "provider-a", modelId: "reasoning-a" },
+    }),
+  ).toEqual({
+    provider: "provider-a",
+    modelId: "reasoning-a",
+    thinkingLevel: "xhigh",
+  });
+  expect(
+    createChildThreadSelectionFromParams({
+      prompt: "legacy only",
+      selection: legacySelection,
+    }),
+  ).toEqual(legacySelection);
+  expect(() =>
+    createChildThreadSelectionFromParams({
+      prompt: "missing model identity",
+      thinkingLevel: "high",
+    }),
+  ).toThrow("thinkingLevel requires model or selection.");
+});
 
 test("valid explicit selections retain the exact pair and supported thinking level", () => {
   expect(

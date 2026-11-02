@@ -208,6 +208,7 @@ function createCreateChildThreadTool(
       "Use create_child_thread when the user asks you to spin up, delegate to, or run a separate child thread.",
       "Keep the child prompt concrete and self-contained so the user can inspect the resulting thread.",
       "Call list_models before choosing an exact provider/modelId or thinking level. Copy the returned values exactly; never guess or silently substitute one.",
+      "Prefer the top-level model and thinkingLevel fields. When model is present, the legacy selection object is compatibility input and is ignored.",
       "pi-gui does not use the Codex-native create_thread or list_projects tool names. Use create_child_thread and list_threads.",
     ],
     parameters: {
@@ -231,7 +232,7 @@ function createCreateChildThreadTool(
         selection: {
           type: "object",
           description:
-            "Legacy structured form of model and thinkingLevel. Prefer the top-level model and thinkingLevel fields.",
+            "Legacy structured form of model and thinkingLevel. Ignored when the top-level model field is present.",
           properties: {
             provider: {
               type: "string",
@@ -284,6 +285,7 @@ function createSpawnWorkerTool(
       "Use spawn_worker for a focused delegated task whose final answer should return in this conversation without creating a new thread.",
       "The worker inherits the current model and thinking level unless selection is provided.",
       "Before selecting a model, call list_models and copy its exact provider and modelId. Use list_models to determine whether the model supports thinking and the exact thinking levels available.",
+      "Prefer the top-level model and thinkingLevel fields. When model is present, the legacy selection object is compatibility input and is ignored.",
       "Do not call Codex-native list_projects, create_thread, or other unavailable tool names. pi-gui exposes list_threads, create_child_thread, and spawn_worker.",
     ],
     parameters: {
@@ -308,7 +310,7 @@ function createSpawnWorkerTool(
         selection: {
           type: "object",
           description:
-            "Legacy structured form of model and thinkingLevel. Prefer the top-level model and thinkingLevel fields.",
+            "Legacy structured form of model and thinkingLevel. Ignored when the top-level model field is present.",
           properties: {
             provider: {
               type: "string",
@@ -592,12 +594,6 @@ export function createChildThreadSelectionFromParams(
   const model = stringParam(params, "model");
   const thinkingLevel = stringParam(params, "thinkingLevel");
   const hasStructuredSelection = "selection" in params;
-  if (model && hasStructuredSelection) {
-    throw new Error("Pass either model/thinkingLevel or selection, not both.");
-  }
-  if (thinkingLevel && !model) {
-    throw new Error("thinkingLevel requires model.");
-  }
   if (model) {
     const separator = model.indexOf("/");
     if (separator <= 0 || separator === model.length - 1) {
@@ -607,6 +603,17 @@ export function createChildThreadSelectionFromParams(
       provider: model.slice(0, separator),
       modelId: model.slice(separator + 1),
       ...(thinkingLevel ? { thinkingLevel } : {}),
+    });
+  }
+  if (thinkingLevel) {
+    if (!hasStructuredSelection) {
+      throw new Error("thinkingLevel requires model or selection.");
+    }
+    const selected = childSelection_decode(params.selection);
+    return childSelection_decode({
+      provider: selected.provider,
+      modelId: selected.modelId,
+      thinkingLevel,
     });
   }
   if (hasStructuredSelection) {
