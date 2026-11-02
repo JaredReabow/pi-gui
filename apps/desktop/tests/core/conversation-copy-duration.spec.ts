@@ -7,6 +7,7 @@ import {
   emitTestSessionEvent,
   getDesktopState,
   launchDesktop,
+  launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
   seedAgentDir,
@@ -350,7 +351,8 @@ test("copies raw code, exact responses, and every loaded offscreen branch row wi
   const workspacePath = await makeWorkspace("conversation-copy-duration");
   await seedAgentDir(agentDir);
   const fixture = await seedConversationCopyFixture(agentDir, workspacePath);
-  const harness = await launchDesktop(userDataDir, {
+  const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
+  const harness = await launch(userDataDir, {
     agentDir,
     initialWorkspaces: [workspacePath],
     scrubProviderEnv: true,
@@ -452,11 +454,11 @@ test("copies raw code, exact responses, and every loaded offscreen branch row wi
       "data-copy-state",
       "success",
     );
-    await finalResponse.getByTestId("copy-response").click();
-    await expect(finalResponse.getByTestId("copy-response")).toHaveAttribute(
-      "data-copy-state",
-      "success",
-    );
+    const copyResponse = finalResponse.getByTestId("copy-response");
+    await expect(copyResponse).toHaveText("Copy");
+    await expect(copyResponse).toHaveAccessibleName("Copy response");
+    await copyResponse.click();
+    await expect(copyResponse).toHaveAttribute("data-copy-state", "success");
 
     const successProbe = await readClipboardProbe(page);
     expect(successProbe.writes).toHaveLength(4);

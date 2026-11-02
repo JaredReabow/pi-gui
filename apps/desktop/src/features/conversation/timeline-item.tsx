@@ -279,6 +279,7 @@ function TimelineMessage({
           {item.text.length > 0 ? (
             <TimelineCopyAction
               label="Copy response"
+              shortLabel="Copy"
               testId="copy-response"
               text={conversationCopyResponseMarkdown(item.text)}
             />
@@ -311,10 +312,12 @@ function TimelineMessage({
 function TimelineCopyAction({
   text,
   label,
+  shortLabel,
   testId,
 }: {
   readonly text: string;
   readonly label: string;
+  readonly shortLabel?: string;
   readonly testId: string;
 }) {
   const clipboard = useConversationClipboard();
@@ -323,7 +326,7 @@ function TimelineCopyAction({
       ? "Copied"
       : clipboard.state === "error"
         ? "Copy failed"
-        : label.replace(/^Copy /, "");
+        : (shortLabel ?? label);
   const accessibleLabel =
     clipboard.state === "success"
       ? "Copied"

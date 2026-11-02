@@ -7,6 +7,8 @@
 - User messages in the transcript now show a locale-aware sent date and time beside the
   message bubble. Queued messages use their actual send-event time rather than the earlier
   queue-creation time.
+- The assistant reply copy control now reads “Copy” while retaining the accessible name
+  “Copy response.”
 - Added persistent conversation goals, in-thread model switching with a context-change
   confirmation, prompt-history recall, copy controls, full Markdown transcript copy, and
   day/hour/minute/second duration formatting.
