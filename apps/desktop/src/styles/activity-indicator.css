@@ -29,6 +29,8 @@
 }
 
 .activity-wave {
+  transform-box: view-box;
+  transform-origin: 0 0;
   animation: activity-wave 1s linear infinite;
 }
 
@@ -61,11 +63,6 @@
   animation: activity-moonwalk-arm 1.2s ease-in-out infinite;
 }
 
-.activity-moonwalk-partner {
-  transform-origin: 8px 8px;
-  animation: activity-moonwalk-partner 900ms ease-in-out infinite alternate;
-}
-
 @keyframes activity-spin {
   to {
     transform: rotate(360deg);
@@ -80,7 +77,11 @@
 
 @keyframes activity-wave {
   to {
-    transform: translateX(24px);
+    /*
+     * The wave repeats every 24 view-box units. At the fixed 18 px rendering
+     * width that period is 18 CSS pixels, preventing a sub-pixel snap at loop.
+     */
+    transform: translateX(18px);
   }
 }
 
@@ -133,16 +134,6 @@
 
   50% {
     transform: rotate(25deg);
-  }
-}
-
-@keyframes activity-moonwalk-partner {
-  from {
-    transform: translateY(0) rotate(-5deg);
-  }
-
-  to {
-    transform: translateY(-1px) rotate(6deg);
   }
 }
 

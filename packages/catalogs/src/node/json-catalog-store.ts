@@ -181,7 +181,13 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
         );
         // The driver persists a session on every agent event, mostly with nothing changed;
         // skipping those writes keeps fsyncs from delaying the events behind them.
-        const next = entryWithoutStoppedReply(entry);
+        const previous = index >= 0 ? state.sessions[index]! : undefined;
+        const next = entryWithoutStoppedReply({
+          ...entry,
+          ...(entry.createdAt === undefined && previous?.createdAt !== undefined
+            ? { createdAt: previous.createdAt }
+            : {}),
+        });
         if (index >= 0 && areSessionEntriesEqual(state.sessions[index]!, next)) {
           return false;
         }
@@ -450,6 +456,7 @@ function areSessionEntriesEqual(left: SessionCatalogEntry, right: SessionCatalog
     left.sessionRef.sessionId === right.sessionRef.sessionId &&
     left.workspaceId === right.workspaceId &&
     left.title === right.title &&
+    left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt &&
     left.archivedAt === right.archivedAt &&
     left.previewSnippet === right.previewSnippet &&

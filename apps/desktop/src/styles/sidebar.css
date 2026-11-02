@@ -786,6 +786,11 @@
   pointer-events: none;
 }
 
+.session-row--with-meta .session-row__leading {
+  /* Keep the activity mark on the title line when status or project context adds a row. */
+  top: 6px;
+}
+
 .session-row__status {
   display: block;
 }

@@ -18,28 +18,18 @@ export function ActivityIndicator({ style, className }: ActivityIndicatorProps) 
   switch (style) {
     case "moonwalk":
       shape = (
-        <>
-          <g transform="translate(0 5) scale(.62)">
-            <g className="activity-moonwalk-partner">
-              <circle cx="8" cy="3" r="2" />
-              <path d="M8 6v7" />
-              <path className="activity-limbs" d="M8 8L2 5 M8 8l6-3" />
-              <path className="activity-legs" d="M8 13l-4 7 M8 13l4 7" />
-            </g>
+        <g transform="translate(2.8 3.6) scale(.68)">
+          <g className="activity-moonwalk">
+            <circle cx="12" cy="4" r="2.1" />
+            <path d="M12 6.2v6.8" />
+            <path className="activity-moonwalk-arm" d="M12 8L7 11 M12 8l5 2" />
+            <path
+              className="activity-moonwalk-leg activity-moonwalk-leg--back"
+              d="M12 13L15 17 17 21 21 21"
+            />
+            <path className="activity-moonwalk-leg" d="M12 13L15 17 17 21 21 21" />
           </g>
-          <g transform="translate(10 5) scale(.62)">
-            <g className="activity-moonwalk">
-              <circle cx="13" cy="4" r="2" />
-              <path d="M11 2h5 M13 6l-1 7 M15 4h1" />
-              <path className="activity-moonwalk-arm" d="M13 8l3 3 3-1" />
-              <path
-                className="activity-moonwalk-leg activity-moonwalk-leg--back"
-                d="M12 13 L15 17 L17 21 L21 21"
-              />
-              <path className="activity-moonwalk-leg" d="M12 13 L15 17 L17 21 L21 21" />
-            </g>
-          </g>
-        </>
+        </g>
       );
       break;
     case "stick":
@@ -58,7 +48,7 @@ export function ActivityIndicator({ style, className }: ActivityIndicatorProps) 
       shape = <circle className="activity-ball" cx="12" cy="14" r="4" />;
       break;
     case "wave":
-      shape = <path className="activity-wave" d="M-12 12q6-12 12 0t12 0t12 0t12 0" />;
+      shape = <path className="activity-wave" d="M-36 9q6-8 12 0t12 0t12 0t12 0t12 0t12 0" />;
       break;
     case "spiral":
       shape = <path className="activity-spin" d="M12 12c-3-4 5-6 5 0s-11 8-11 0 17-12 17 0" />;

@@ -180,6 +180,7 @@ const validSession = {
   workspaceId: "workspace",
   sessionRef: { workspaceId: "workspace", sessionId: "session" },
   title: "Session",
+  createdAt: "2026-07-20T00:00:00.000Z",
   updatedAt: timestamp,
   status: "idle",
 };
@@ -313,6 +314,24 @@ await test("session writes that change nothing leave the catalog file alone", as
       undefined,
     );
     assert.equal(await reopened.getSessionFile(session.sessionRef), "/session.jsonl");
+  });
+});
+
+await test("session metadata writes preserve Pi's source creation time", async () => {
+  await withTempDir(async (dir) => {
+    const catalogFilePath = join(dir, "catalogs.json");
+    const store = new JsonCatalogStore({ catalogFilePath });
+    await store.sessions.upsertSession(validSession);
+    await store.sessions.upsertSession({
+      ...validSession,
+      title: "Renamed with partial runtime metadata",
+      createdAt: undefined,
+    });
+
+    const reopened = new JsonCatalogStore({ catalogFilePath });
+    const persisted = await reopened.sessions.getSession(validSession.sessionRef);
+    assert.equal(persisted?.title, "Renamed with partial runtime metadata");
+    assert.equal(persisted?.createdAt, validSession.createdAt);
   });
 });
 

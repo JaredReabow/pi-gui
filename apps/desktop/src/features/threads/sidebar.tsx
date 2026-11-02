@@ -2047,7 +2047,7 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
         ? thread.session.updatedAt
         : undefined;
     const childDuration = sidebarOrder_elapsed(childStartedAt, childEndedAt);
-    const childAge = sidebarOrder_creationAge(thread.childCreatedAt);
+    const childAge = sidebarOrder_creationAge(thread.childCreatedAt ?? thread.session.createdAt);
     const groupedChildren = sidebarPreferences_groupChildren(children);
     const accentColor = thread.accentColor ?? projectIdentity_fallbackAccent(thread.workspaceId);
     const threadOrigin = !thread.parentKey
@@ -2066,6 +2066,7 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
     const classes = [
       "session-row",
       children.length > 0 && !overlay ? "session-row--parent" : "",
+      (thread.childStatus || showContext) && !overlay ? "session-row--with-meta" : "",
       active ? "session-row--active" : "",
       pinned ? "session-row--pinned" : "",
       dragging ? "session-row--dragging" : "",

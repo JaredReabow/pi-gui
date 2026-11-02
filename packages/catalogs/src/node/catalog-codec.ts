@@ -125,6 +125,7 @@ function isSessionEntry(value: unknown): value is SessionCatalogEntry {
     isRecord(value) &&
     hasStrings(value, ["workspaceId", "title", "updatedAt"]) &&
     hasOptionalStrings(value, [
+      "createdAt",
       "archivedAt",
       "previewSnippet",
       "sessionFilePath",

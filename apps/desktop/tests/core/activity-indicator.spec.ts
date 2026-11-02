@@ -61,6 +61,10 @@ test("renders and persists the selected running indicator", async ({}, testInfo)
     const selector = window.getByLabel("Activity indicator");
     await expect(selector).toHaveValue("moonwalk");
     await expect(selector.locator("option")).toHaveCount(6);
+    const previewIndicator = window.getByTestId("activity-indicator").first();
+    await expect(previewIndicator.locator("svg circle")).toHaveCount(1);
+    await expect(previewIndicator.locator(".activity-moonwalk")).toHaveCount(1);
+    await expect(previewIndicator.locator(".activity-moonwalk-partner")).toHaveCount(0);
     await selector.selectOption("wave");
 
     await expect
@@ -84,6 +88,35 @@ test("renders and persists the selected running indicator", async ({}, testInfo)
         }),
       )
       .toBe("activity-wave");
+    const verticalDelta = await row.evaluate((row) => {
+      const wave = row.querySelector<SVGPathElement>(".activity-wave");
+      const title = row.querySelector<HTMLElement>(".session-row__title");
+      if (!wave || !title) throw new Error("Wave indicator or title is missing");
+      const waveBounds = wave.getBoundingClientRect();
+      const titleBounds = title.getBoundingClientRect();
+      return waveBounds.top + waveBounds.height / 2 - (titleBounds.top + titleBounds.height / 2);
+    });
+    expect(Math.abs(verticalDelta)).toBeLessThanOrEqual(2);
+    const waveLoop = await indicator.locator(".activity-wave").evaluate((node) => {
+      const path = node as SVGPathElement;
+      const svg = path.ownerSVGElement;
+      const animation = path.getAnimations()[0];
+      const effect = animation?.effect;
+      const frames = effect instanceof KeyframeEffect ? effect.getKeyframes() : [];
+      const finalTransform = String(frames.at(-1)?.transform ?? "");
+      const translateMatch = /translateX\(([\d.]+)px\)/.exec(finalTransform);
+      const bounds = path.getBBox();
+      return {
+        renderedWidth: svg?.getBoundingClientRect().width ?? 0,
+        translatedPixels: translateMatch ? Number(translateMatch[1]) : Number.NaN,
+        pathStart: bounds.x,
+        pathEnd: bounds.x + bounds.width,
+        viewBoxWidth: svg?.viewBox.baseVal.width ?? 0,
+      };
+    });
+    expect(waveLoop.translatedPixels).toBeCloseTo(waveLoop.renderedWidth, 3);
+    expect(waveLoop.pathStart).toBeLessThanOrEqual(-waveLoop.viewBoxWidth);
+    expect(waveLoop.pathEnd).toBeGreaterThanOrEqual(waveLoop.viewBoxWidth);
 
     await window.getByRole("button", { name: "Customize Sidebar" }).click();
     await window.getByRole("menuitem", { name: "Grouping" }).click();

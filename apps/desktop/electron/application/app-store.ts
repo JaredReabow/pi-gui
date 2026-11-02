@@ -2840,9 +2840,10 @@ export class DesktopAppStore {
             initiatingOrigin: this.sessionState.initiatingOriginBySession.get(
               sessionKey({ workspaceId: workspace.id, sessionId: session.id }),
             ),
-            createdAt: this.sessionState.createdAtBySession.get(
-              sessionKey({ workspaceId: workspace.id, sessionId: session.id }),
-            ),
+            createdAt:
+              this.sessionState.createdAtBySession.get(
+                sessionKey({ workspaceId: workspace.id, sessionId: session.id }),
+              ) ?? session.createdAt,
           })),
         })),
         createdAtBySession: mapToRecord(this.sessionState.createdAtBySession),

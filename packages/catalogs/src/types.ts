@@ -42,6 +42,8 @@ export interface SessionCatalogEntry {
   sessionRef: SessionRef;
   workspaceId: WorkspaceId;
   title: string;
+  /** Pi's session-header creation time, when the source file provides one. */
+  createdAt?: string;
   updatedAt: string;
   archivedAt?: string;
   previewSnippet?: string;

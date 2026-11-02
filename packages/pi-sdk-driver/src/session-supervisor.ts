@@ -3605,6 +3605,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     const previewSnippet = runtimeSnapshot?.preview ?? previewFromSessionInfo(info);
     const archivedAt = runtimeSnapshot?.archivedAt ?? existingEntry?.archivedAt;
     const titleFromInfo = titleFromSessionInfo(info);
+    const createdAt = validSessionCreatedAt(info.created);
     const entry: SessionCatalogSnapshot["sessions"][number] = {
       sessionRef: {
         workspaceId: workspace.workspaceId,
@@ -3613,6 +3614,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
       workspaceId: workspace.workspaceId,
       title:
         runtimeSnapshot?.title ?? resolvedCatalogSessionTitle(existingEntry?.title, titleFromInfo),
+      ...(createdAt ? { createdAt } : {}),
       updatedAt: runtimeSnapshot?.updatedAt ?? info.modified.toISOString(),
       status: runtimeSnapshot?.status ?? "idle",
       sessionFilePath: info.path,
@@ -3671,6 +3673,11 @@ function resolvedCatalogSessionTitle(existingTitle: string | undefined, infoTitl
     return infoTitle;
   }
   return trimmedExisting;
+}
+
+function validSessionCreatedAt(value: Date): string | undefined {
+  const timestamp = value.getTime();
+  return Number.isFinite(timestamp) ? value.toISOString() : undefined;
 }
 
 const DEFAULT_SESSION_THINKING_LEVEL = "medium";

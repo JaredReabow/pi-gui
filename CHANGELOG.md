@@ -30,6 +30,9 @@
   sine wave, bouncing ball, stick figure, wheel, and spiral, with durable persistence.
 - Added open, partial, and closed folder states, unread and selected-thread reveal, compact
   child rows with inline age, separated child groups, and parent/child history controls.
+- Backfilled thread creation ages from Pi's session-header timestamps, including imported and
+  agent-created threads, instead of showing `Unknown` when the UI-created-session map had no
+  entry. Runtime catalog writes preserve the source timestamp.
 - Replaced the active project's generic overflow link with a project-coloured, counted
   “N Threads hidden” disclosure. Expanding it now reliably reveals “Show less,” while
   inactive projects retain the quieter “Show more” control.
@@ -57,6 +60,9 @@
   bounded queues, cancellation-safe delivery, and test-only transport isolation.
 - Added the donation/support surface using the existing monthly Stripe and one-off
   Stripe/PayPal links.
+- Changed the moonwalk activity indicator to one stick figure, vertically aligned the
+  sine-wave indicator with the thread title, and made the wave repeat through a full
+  off-screen cycle so it loops without a phase jump.
 
 ### Packaging
 

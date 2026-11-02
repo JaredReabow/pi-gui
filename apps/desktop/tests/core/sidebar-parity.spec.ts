@@ -733,6 +733,7 @@ test("five All Threads sorts are deterministic and keyboard order matches narrow
     testMode: "background",
   });
   let refs = new Map<string, SessionRef>();
+  let charlieCreatedAt = "";
 
   try {
     const window = await firstRun.firstWindow();
@@ -746,6 +747,13 @@ test("five All Threads sorts are deterministic and keyboard order matches narrow
       "Tie B",
     ]);
     refs = refsByTitle(await getDesktopState(window));
+    const charlieHeader = JSON.parse(
+      (
+        await readFile(await sessionFilePathFromCatalog(userDataDir, refs.get("Charlie")!), "utf8")
+      ).split("\n", 1)[0]!,
+    ) as { timestamp?: string };
+    expect(charlieHeader.timestamp).toEqual(expect.any(String));
+    charlieCreatedAt = charlieHeader.timestamp!;
   } finally {
     await closeHarness(firstRun, testInfo, "sorts-initial");
   }
@@ -810,7 +818,7 @@ test("five All Threads sorts are deterministic and keyboard order matches narrow
     activity: ["Legacy", "Charlie", "Alpha", "Bravo", "Tie A", "Tie B"],
     "latest-human-input": ["Legacy", "Charlie", "Bravo", "Alpha", "Tie A", "Tie B"],
     "unread-first": ["Legacy", "Charlie", "Alpha", "Bravo", "Tie A", "Tie B"],
-    created: ["Legacy", "Bravo", "Alpha", "Tie A", "Tie B", "Charlie"],
+    created: ["Charlie", "Legacy", "Bravo", "Alpha", "Tie A", "Tie B"],
     title: ["Alpha", "Bravo", "Charlie", "Legacy", "Tie A", "Tie B"],
   };
 
@@ -836,9 +844,11 @@ test("five All Threads sorts are deterministic and keyboard order matches narrow
     }
 
     await select.selectOption("created");
-    await expect(
-      allThreads.locator(`.session-row[data-session-id="${refs.get("Charlie")!.sessionId}"]`),
-    ).toHaveAttribute("data-session-created-at", "unknown");
+    const charlieRow = allThreads.locator(
+      `.session-row[data-session-id="${refs.get("Charlie")!.sessionId}"]`,
+    );
+    await expect(charlieRow).toHaveAttribute("data-session-created-at", charlieCreatedAt);
+    await expect(charlieRow.locator(".session-row__time")).toHaveText(/^Age /);
 
     await select.selectOption("title");
     for (const width of [720, 1440]) {
@@ -1065,6 +1075,7 @@ test("forest reachability, all child outcomes, origins, Age and history survive 
     testMode: "background",
   });
   let refs = new Map<string, SessionRef>();
+  let cycleACreatedAt = "";
 
   try {
     const window = await firstRun.firstWindow();
@@ -1089,6 +1100,13 @@ test("forest reachability, all child outcomes, origins, Age and history survive 
     ]);
     await createSessions(window, betaPath, ["Cross project child"]);
     refs = refsByTitle(await getDesktopState(window));
+    const cycleAHeader = JSON.parse(
+      (
+        await readFile(await sessionFilePathFromCatalog(userDataDir, refs.get("Cycle A")!), "utf8")
+      ).split("\n", 1)[0]!,
+    ) as { timestamp?: string };
+    expect(cycleAHeader.timestamp).toEqual(expect.any(String));
+    cycleACreatedAt = cycleAHeader.timestamp!;
   } finally {
     await closeHarness(firstRun, testInfo, "forest-initial");
   }
@@ -1186,7 +1204,7 @@ test("forest reachability, all child outcomes, origins, Age and history survive 
       source: "desktop-host",
     });
     expect(sessionByTitle.get("Orphan")?.createdAt).toBe("2000-01-01T00:00:00.000Z");
-    expect(sessionByTitle.get("Cycle A")?.createdAt).toBeUndefined();
+    expect(sessionByTitle.get("Cycle A")?.createdAt).toBe(cycleACreatedAt);
 
     await window.evaluate(async (ref) => {
       const app = globalThis.window.piApp;
@@ -1248,13 +1266,14 @@ test("forest reachability, all child outcomes, origins, Age and history survive 
       "title",
       "Created 2000-01-01T00:00:00.000Z",
     );
-    const missingCreationRow = window.locator(
+    const sourceCreatedRow = window.locator(
       `.session-row[data-session-id="${refs.get("Cycle A")!.sessionId}"]`,
     );
-    await expect(missingCreationRow.locator(".session-row__time")).toHaveText("Unknown");
-    await expect(missingCreationRow.locator(".session-row__time")).toHaveAttribute(
+    await expect(sourceCreatedRow).toHaveAttribute("data-session-created-at", cycleACreatedAt);
+    await expect(sourceCreatedRow.locator(".session-row__time")).toHaveText(/^Age /);
+    await expect(sourceCreatedRow.locator(".session-row__time")).toHaveAttribute(
       "title",
-      "Creation time unavailable",
+      `Created ${cycleACreatedAt}`,
     );
 
     const pinnedSection = window.getByRole("region", { name: "Pinned threads" });

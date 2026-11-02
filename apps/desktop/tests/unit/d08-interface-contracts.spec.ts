@@ -200,7 +200,9 @@ test("creation metadata uses only known new-session seeds, never updatedAt", asy
   for (const kind of ["human", "tool", "scheduled"])
     expect(source).toContain(`this.recordCreatedSession(snapshot.ref, "${kind}")`);
   expect(assignments.join("\n")).not.toContain("updatedAt");
-  expect(source).toContain("createdAt: this.sessionState.createdAtBySession.get(");
+  expect(source).toContain("createdAt:");
+  expect(source).toContain("this.sessionState.createdAtBySession.get(");
+  expect(source).toContain("?? session.createdAt");
   const map = await readFile(
     join(__dirname, "../../electron/conversation/session-state-map.ts"),
     "utf8",
