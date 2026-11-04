@@ -50,6 +50,12 @@ import {
 import { conversationDurationFormat } from "./conversation-duration";
 import { conversationMessageTimestamp_format } from "./conversation-message-timestamp";
 import { useI18n } from "../../i18n";
+import {
+  MessageHistoryActions,
+  MessageHistoryEditForm,
+  MessageHistoryError,
+  useMessageHistoryEditor,
+} from "./message-history-editor";
 
 export function TimelineItem({
   item,
@@ -67,6 +73,9 @@ export function TimelineItem({
   onExtensionAction,
   annotationMarkers,
   onOpenAnnotation,
+  onEditMessage,
+  onDeleteMessage,
+  historyDisabledReason,
 }: {
   readonly item: DisplayTimelineItem;
   readonly expandedToolCallIds?: ReadonlySet<string>;
@@ -83,6 +92,9 @@ export function TimelineItem({
   readonly onExtensionAction?: RunExtensionAction;
   readonly annotationMarkers?: readonly AnnotationMarker[];
   readonly onOpenAnnotation?: OpenAnnotation;
+  readonly onEditMessage?: (messageId: string, text: string) => Promise<void>;
+  readonly onDeleteMessage?: (messageId: string) => Promise<void>;
+  readonly historyDisabledReason?: string;
 }) {
   switch (item.kind) {
     case "turn-marker":
@@ -102,6 +114,9 @@ export function TimelineItem({
           workspacePath={workspacePath}
           annotationMarkers={annotationMarkers}
           onOpenAnnotation={onOpenAnnotation}
+          onEditMessage={onEditMessage}
+          onDeleteMessage={onDeleteMessage}
+          historyDisabledReason={historyDisabledReason}
         />
       );
     case "activity":
@@ -161,6 +176,9 @@ function TimelineMessage({
   onOpenWorkspaceFileLine,
   annotationMarkers,
   onOpenAnnotation,
+  onEditMessage,
+  onDeleteMessage,
+  historyDisabledReason,
 }: {
   readonly item: SessionTranscriptMessage;
   readonly sourceMessageIndex?: number;
@@ -170,6 +188,9 @@ function TimelineMessage({
   readonly onOpenWorkspaceFileLine?: (target: WorkspaceFileLine) => void;
   readonly annotationMarkers?: readonly AnnotationMarker[];
   readonly onOpenAnnotation?: OpenAnnotation;
+  readonly onEditMessage?: (messageId: string, text: string) => Promise<void>;
+  readonly onDeleteMessage?: (messageId: string) => Promise<void>;
+  readonly historyDisabledReason?: string;
 }) {
   const articleRef = useRef<HTMLElement | null>(null);
   const { locale } = useI18n();
@@ -181,6 +202,15 @@ function TimelineMessage({
     () => (item.role === "user" ? parseAnnotatedPrompt(item.text) : null),
     [item.role, item.text],
   );
+  const displayedBody = annotated ? annotated.body : (crossProject?.body ?? item.text);
+  const history = useMessageHistoryEditor({
+    messageId: item.sourceMessageId,
+    role: item.role === "user" ? "user" : "assistant",
+    text: item.role === "user" ? displayedBody : item.text,
+    disabledReason: historyDisabledReason,
+    onEditMessage,
+    onDeleteMessage,
+  });
   const markers =
     annotationMarkers?.length && onOpenAnnotation ? (
       <AnnotationMarkers
@@ -192,7 +222,7 @@ function TimelineMessage({
     ) : null;
 
   if (item.role === "user") {
-    const body = annotated ? annotated.body : (crossProject?.body ?? item.text);
+    const body = displayedBody;
     const sentAt = conversationMessageTimestamp_format(item.createdAt, locale);
     return (
       <article className="timeline-item timeline-item--user" ref={articleRef}>
@@ -243,9 +273,25 @@ function TimelineMessage({
                 )}
               </div>
             ) : null}
-            {annotated ? <SentAnnotations annotations={annotated.annotations} /> : null}
-            {annotated && !body.trim() ? null : <MessageMarkdown annotationRoot text={body} />}
+            {history.editing ? (
+              <MessageHistoryEditForm editor={history} role="user" />
+            ) : (
+              <>
+                {annotated ? <SentAnnotations annotations={annotated.annotations} /> : null}
+                {annotated && !body.trim() ? null : <MessageMarkdown annotationRoot text={body} />}
+              </>
+            )}
           </div>
+          <MessageHistoryError editor={history} />
+          {history.available || history.editing ? (
+            <div className="timeline-item__actions timeline-item__actions--user">
+              <MessageHistoryActions
+                editor={history}
+                role="user"
+                canEdit={Boolean(onEditMessage && !historyDisabledReason && item.text.trim())}
+              />
+            </div>
+          ) : null}
         </div>
         {markers}
       </article>
@@ -268,13 +314,18 @@ function TimelineMessage({
   const forkable = sourceMessageIndex !== undefined;
   return (
     <article className="timeline-item timeline-item--assistant" ref={articleRef}>
-      <MessageMarkdown
-        annotationRoot
-        onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
-        text={item.text}
-        workspacePath={workspacePath}
-      />
-      {forkable || item.text.length > 0 ? (
+      {history.editing ? (
+        <MessageHistoryEditForm editor={history} role="assistant" />
+      ) : (
+        <MessageMarkdown
+          annotationRoot
+          onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
+          text={item.text}
+          workspacePath={workspacePath}
+        />
+      )}
+      <MessageHistoryError editor={history} />
+      {forkable || item.text.length > 0 || history.available ? (
         <div className="timeline-item__actions">
           {item.text.length > 0 ? (
             <TimelineCopyAction
@@ -302,6 +353,11 @@ function TimelineMessage({
               <span className="timeline-item__action-label">Fork</span>
             </button>
           ) : null}
+          <MessageHistoryActions
+            editor={history}
+            role="assistant"
+            canEdit={Boolean(onEditMessage && !historyDisabledReason && item.text.trim())}
+          />
         </div>
       ) : null}
       {markers}

@@ -4,6 +4,11 @@
 
 ### Conversation
 
+- Saved user messages and assistant replies now expose inline Edit and Delete actions.
+  Edits preserve prompt attachments and provenance in model context, deletion requires a
+  second confirmation, and both actions stay disabled while a run or queue is active.
+  Changes are recorded as branch-local append-only history markers, so the transcript
+  updates immediately and survives restart without corrupting Pi's session tree.
 - User messages in the transcript now show a locale-aware sent date and time beside the
   message bubble. Queued messages use their actual send-event time rather than the earlier
   queue-creation time.

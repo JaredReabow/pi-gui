@@ -1334,6 +1334,35 @@ export class DesktopAppStore {
     return this.workspaceOwner.forkThread(input);
   }
 
+  async editTranscriptMessage(
+    target: WorkspaceSessionTarget,
+    messageId: string,
+    text: string,
+  ): Promise<DesktopAppState> {
+    await this.initialize();
+    const sessionRef = toSessionRef(target);
+    if (!this.sessionFromState(sessionRef)) {
+      throw new Error(`Unknown session: ${target.workspaceId}:${target.sessionId}`);
+    }
+    await this.driver.editTranscriptMessage(sessionRef, messageId, text);
+    await this.reloadTranscriptFromDriver(sessionRef);
+    return this.refreshState({ clearLastError: true });
+  }
+
+  async deleteTranscriptMessage(
+    target: WorkspaceSessionTarget,
+    messageId: string,
+  ): Promise<DesktopAppState> {
+    await this.initialize();
+    const sessionRef = toSessionRef(target);
+    if (!this.sessionFromState(sessionRef)) {
+      throw new Error(`Unknown session: ${target.workspaceId}:${target.sessionId}`);
+    }
+    await this.driver.deleteTranscriptMessage(sessionRef, messageId);
+    await this.reloadTranscriptFromDriver(sessionRef);
+    return this.refreshState({ clearLastError: true });
+  }
+
   async removeWorktree(input: RemoveWorktreeInput): Promise<DesktopAppState> {
     return this.workspaceOwner.removeWorktree(input);
   }

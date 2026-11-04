@@ -109,6 +109,7 @@ import {
   type ProjectAccentColor,
 } from "../../contracts/project-identity";
 import { sidebarPreferences_defaultActivityStyle } from "../../contracts/sidebar-preferences";
+import { useTranscriptMessageHistoryActions } from "./use-transcript-message-history-actions";
 
 type WorkspaceAccentStyle = CSSProperties & {
   readonly "--workspace-accent": ProjectAccentColor;
@@ -252,6 +253,8 @@ export default function App() {
   );
   const selectedSessionKey =
     selectedWorkspace && selectedSession ? `${selectedWorkspace.id}:${selectedSession.id}` : "";
+  const transcriptWorkspaceId = selectedWorkspace?.id;
+  const transcriptSessionId = selectedSession?.id;
   const workbenchTarget = useMemo(
     () =>
       selectedWorkspace && selectedSession
@@ -815,6 +818,15 @@ export default function App() {
     if (!restoreTopmostDialogFocus()) composerRef.current?.focus();
   }, [selectedSessionKey, snapshot?.activeView]);
 
+  const transcriptMessageHistory = useTranscriptMessageHistoryActions({
+    api,
+    workspaceId: transcriptWorkspaceId,
+    sessionId: transcriptSessionId,
+    running: selectedSession?.status === "running",
+    schemaSkew: showSchemaSkewNotice,
+    setSnapshot,
+  });
+
   if (!api || desktop.view.kind !== "ready" || !snapshot) {
     return (
       <DesktopStartupSurface
@@ -1220,6 +1232,9 @@ export default function App() {
                     onOpenTurnChange={turnChanges.openTurnChange}
                     onOpenWorkspaceFileLine={handleOpenWorkspaceFileLine}
                     onExtensionAction={runExtensionCardAction}
+                    onEditMessage={transcriptMessageHistory.edit}
+                    onDeleteMessage={transcriptMessageHistory.remove}
+                    historyDisabledReason={transcriptMessageHistory.disabledReason}
                     extensionToolLabels={extensionToolLabels}
                     workspacePath={selectedWorkspace.path}
                     onForkFromMessage={

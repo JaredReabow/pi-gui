@@ -54,6 +54,9 @@ interface ConversationTimelineProps {
   readonly onForkFromMessage?: (messageIndex: number, preview?: string) => void;
   readonly onOpenWorkspaceFileLine?: (target: WorkspaceFileLine) => void;
   readonly onExtensionAction?: RunExtensionAction;
+  readonly onEditMessage?: (messageId: string, text: string) => Promise<void>;
+  readonly onDeleteMessage?: (messageId: string) => Promise<void>;
+  readonly historyDisabledReason?: string;
   readonly extensionToolLabels: ExtensionToolLabels;
   readonly scheduledOrigins?: ReadonlyMap<string, ScheduledTaskOrigin>;
   readonly workspacePath?: string;
@@ -75,6 +78,9 @@ export function ConversationTimeline({
   onForkFromMessage,
   onOpenWorkspaceFileLine,
   onExtensionAction,
+  onEditMessage,
+  onDeleteMessage,
+  historyDisabledReason,
   extensionToolLabels,
   scheduledOrigins,
   workspacePath,
@@ -219,6 +225,9 @@ export function ConversationTimeline({
                     onForkFromMessage={onForkFromMessage}
                     onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
                     onExtensionAction={onExtensionAction}
+                    onEditMessage={onEditMessage}
+                    onDeleteMessage={onDeleteMessage}
+                    historyDisabledReason={historyDisabledReason}
                     workspacePath={workspacePath}
                     annotationMarkers={
                       markersByMessage.get(item.id) ??
@@ -379,6 +388,9 @@ interface MeasuredTimelineItemProps {
   readonly onForkFromMessage?: (messageIndex: number, preview?: string) => void;
   readonly onOpenWorkspaceFileLine?: (target: WorkspaceFileLine) => void;
   readonly onExtensionAction?: RunExtensionAction;
+  readonly onEditMessage?: (messageId: string, text: string) => Promise<void>;
+  readonly onDeleteMessage?: (messageId: string) => Promise<void>;
+  readonly historyDisabledReason?: string;
   readonly scheduledOrigin?: ScheduledTaskOrigin;
   readonly workspacePath?: string;
   readonly annotationMarkers: readonly AnnotationMarker[];
@@ -402,6 +414,9 @@ function MeasuredTimelineItemBase({
   onForkFromMessage,
   onOpenWorkspaceFileLine,
   onExtensionAction,
+  onEditMessage,
+  onDeleteMessage,
+  historyDisabledReason,
   scheduledOrigin,
   workspacePath,
   annotationMarkers,
@@ -452,6 +467,9 @@ function MeasuredTimelineItemBase({
           onForkFromMessage={onForkFromMessage}
           onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
           onExtensionAction={onExtensionAction}
+          onEditMessage={onEditMessage}
+          onDeleteMessage={onDeleteMessage}
+          historyDisabledReason={historyDisabledReason}
           scheduledOrigin={scheduledOrigin}
           workspacePath={workspacePath}
           annotationMarkers={annotationMarkers}
@@ -548,6 +566,9 @@ function areMeasuredTimelineItemPropsEqual(
     prev.onForkFromMessage === next.onForkFromMessage &&
     prev.onOpenWorkspaceFileLine === next.onOpenWorkspaceFileLine &&
     prev.onExtensionAction === next.onExtensionAction &&
+    prev.onEditMessage === next.onEditMessage &&
+    prev.onDeleteMessage === next.onDeleteMessage &&
+    prev.historyDisabledReason === next.historyDisabledReason &&
     prev.workspacePath === next.workspacePath &&
     prev.annotationMarkers === next.annotationMarkers &&
     prev.onOpenAnnotation === next.onOpenAnnotation &&

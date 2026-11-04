@@ -369,6 +369,21 @@ export function PencilIcon() {
   );
 }
 
+export function TrashIcon() {
+  return (
+    <Icon>
+      <path
+        d="M6.8 8.2h10.4l-.7 8.2a1.5 1.5 0 0 1-1.5 1.3H9a1.5 1.5 0 0 1-1.5-1.3l-.7-8.2ZM5.5 6.2h13M9.3 6.2l.7-2h4l.7 2M10.8 10.2v4.9M13.2 10.2v4.9"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.25"
+        fill="none"
+      />
+    </Icon>
+  );
+}
+
 export function CopyIcon() {
   return (
     <Icon>

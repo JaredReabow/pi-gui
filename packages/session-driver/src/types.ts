@@ -422,6 +422,8 @@ export interface SessionDriver {
   setSessionModel(sessionRef: SessionRef, selection: SessionModelSelection): Promise<void>;
   setSessionThinkingLevel(sessionRef: SessionRef, thinkingLevel: string): Promise<void>;
   renameSession(sessionRef: SessionRef, title: string): Promise<void>;
+  editTranscriptMessage(sessionRef: SessionRef, messageId: string, text: string): Promise<void>;
+  deleteTranscriptMessage(sessionRef: SessionRef, messageId: string): Promise<void>;
   compactSession(sessionRef: SessionRef, customInstructions?: string): Promise<void>;
   reloadSession(sessionRef: SessionRef): Promise<void>;
   getSessionTree(sessionRef: SessionRef): Promise<SessionTreeSnapshot>;

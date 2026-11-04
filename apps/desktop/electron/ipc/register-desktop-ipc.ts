@@ -132,6 +132,8 @@ type ConversationOwner = Pick<
   | "reorderPinnedSessions"
   | "selectSession"
   | "renameSession"
+  | "editTranscriptMessage"
+  | "deleteTranscriptMessage"
   | "archiveSession"
   | "unarchiveSession"
   | "markSessionRead"
@@ -522,6 +524,23 @@ export function registerDesktopIpc({
     const title = expectString(rawTitle, "title");
     return run(event, () => owners.conversation.renameSession(target, title));
   });
+  ipcMain.handle(
+    desktopIpc.editTranscriptMessage,
+    (event, rawTarget: unknown, rawMessageId: unknown, rawText: unknown) => {
+      const target = expectSessionTarget(rawTarget);
+      const messageId = expectNonEmptyString(rawMessageId, "messageId");
+      const text = expectNonEmptyString(rawText, "text");
+      return run(event, () => owners.conversation.editTranscriptMessage(target, messageId, text));
+    },
+  );
+  ipcMain.handle(
+    desktopIpc.deleteTranscriptMessage,
+    (event, rawTarget: unknown, rawMessageId: unknown) => {
+      const target = expectSessionTarget(rawTarget);
+      const messageId = expectNonEmptyString(rawMessageId, "messageId");
+      return run(event, () => owners.conversation.deleteTranscriptMessage(target, messageId));
+    },
+  );
   ipcMain.handle(desktopIpc.archiveSession, (event, rawTarget: unknown) => {
     const target = expectSessionTarget(rawTarget);
     return run(event, () => owners.conversation.archiveSession(target));

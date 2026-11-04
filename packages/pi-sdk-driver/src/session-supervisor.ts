@@ -142,6 +142,10 @@ import {
   type InlineWorkerSupervisorOptions,
 } from "./inline-worker-supervisor.js";
 import { inlineWorkerPolicy_validatePrompt } from "./inline-worker-policy.js";
+import {
+  TRANSCRIPT_HISTORY_CUSTOM_TYPE,
+  transcriptHistory_replacementContent,
+} from "./transcript-history.js";
 
 type RuntimeModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
@@ -1852,6 +1856,79 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     this.whenIdle(record);
   }
 
+  async editTranscriptMessage(
+    sessionRef: SessionRef,
+    messageId: string,
+    editedText: string,
+  ): Promise<void> {
+    const text = editedText.trim();
+    if (!text) {
+      throw new Error("Message text cannot be empty.");
+    }
+    const record = await this.ensureRecord(sessionRef);
+    await this.assertTranscriptHistoryWritable(record);
+    const session = this.requireSession(record);
+    const sessionManager = this.getWritableSessionManager(record);
+    const branch = sessionManager.getBranch();
+    const index = branch.findIndex((entry) => entry.id === messageId);
+    const entry = index < 0 ? undefined : branch[index];
+    if (
+      !entry ||
+      entry.type !== "message" ||
+      (entry.message.role !== "user" && entry.message.role !== "assistant")
+    ) {
+      throw new Error("Only user messages and assistant replies can be edited.");
+    }
+
+    sessionManager.appendContextEdit(messageId, {
+      content: transcriptHistory_replacementContent(entry.message.content, text),
+    });
+    sessionManager.appendCustomEntry(TRANSCRIPT_HISTORY_CUSTOM_TYPE, {
+      version: 1,
+      targetId: messageId,
+      action: "edit",
+      text,
+    });
+    session.refreshContext();
+    forcePersistPiSession(sessionManager);
+    record.updatedAt = nowIso();
+    record.preview = this.previewAfterHistoryMutation(sessionManager, record.updatedAt);
+    await this.persistSnapshot(record);
+    await this.emit(record, sessionUpdatedEvent(record));
+  }
+
+  async deleteTranscriptMessage(sessionRef: SessionRef, messageId: string): Promise<void> {
+    const record = await this.ensureRecord(sessionRef);
+    await this.assertTranscriptHistoryWritable(record);
+    const session = this.requireSession(record);
+    const sessionManager = this.getWritableSessionManager(record);
+    const branch = sessionManager.getBranch();
+    const index = branch.findIndex((entry) => entry.id === messageId);
+    const entry = index < 0 ? undefined : branch[index];
+    if (
+      !entry ||
+      entry.type !== "message" ||
+      (entry.message.role !== "user" && entry.message.role !== "assistant")
+    ) {
+      throw new Error("Only user messages and assistant replies can be deleted.");
+    }
+
+    for (const targetId of this.transcriptDeleteTargets(branch, index, entry)) {
+      sessionManager.appendContextEdit(targetId, null);
+    }
+    sessionManager.appendCustomEntry(TRANSCRIPT_HISTORY_CUSTOM_TYPE, {
+      version: 1,
+      targetId: messageId,
+      action: "delete",
+    });
+    session.refreshContext();
+    forcePersistPiSession(sessionManager);
+    record.updatedAt = nowIso();
+    record.preview = this.previewAfterHistoryMutation(sessionManager, record.updatedAt);
+    await this.persistSnapshot(record);
+    await this.emit(record, sessionUpdatedEvent(record));
+  }
+
   /**
    * Reloads now when the session is idle. A reload tears down extensions (and their MCP
    * connections and tools), so, like pi's own /reload, it never interrupts a running turn or a
@@ -1865,6 +1942,77 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     }
     await this.runReload(record);
     return "reloaded";
+  }
+
+  private async assertTranscriptHistoryWritable(record: ManagedSessionRecord): Promise<void> {
+    for (let write; (write = this.stopMarkWrites.get(sessionKey(record.ref)));) await write;
+    const session = this.requireSession(record);
+    if (
+      isRecordBusy(record) ||
+      record.runAwaitingSettle ||
+      record.status !== "idle" ||
+      record.queuedMessages.length > 0 ||
+      record.queuedStartScheduled ||
+      record.sendsSettling > 0 ||
+      record.queueStepsPending > 0 ||
+      session.pendingMessageCount > 0 ||
+      record.startingQueuedMessage ||
+      record.pendingHostUiRequests.size > 0
+    ) {
+      throw new Error(
+        "Finish or stop the current run before editing or deleting transcript messages.",
+      );
+    }
+  }
+
+  private transcriptDeleteTargets(
+    branch: SessionBranchEntry[],
+    targetIndex: number,
+    target: SessionMessageBranchEntry,
+  ): readonly string[] {
+    if (target.message.role !== "assistant" || !Array.isArray(target.message.content)) {
+      return [target.id];
+    }
+    const toolCallIds = new Set(
+      target.message.content.flatMap((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "toolCall" &&
+        "id" in part &&
+        typeof part.id === "string"
+          ? [part.id]
+          : [],
+      ),
+    );
+    const targets = [target.id];
+    for (const entry of branch.slice(targetIndex + 1)) {
+      if (
+        entry.type === "message" &&
+        (entry.message.role === "user" || entry.message.role === "assistant")
+      ) {
+        break;
+      }
+      if (
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        toolCallIds.has(entry.message.toolCallId)
+      ) {
+        targets.push(entry.id);
+      }
+    }
+    return targets;
+  }
+
+  private previewAfterHistoryMutation(
+    sessionManager: SessionManager,
+    fallbackTimestamp: string,
+  ): string | undefined {
+    const messages = transcriptFromSession(sessionManager, fallbackTimestamp).filter(
+      (item): item is SessionTranscriptMessage =>
+        item.kind === "message" && (item.role === "user" || item.role === "assistant"),
+    );
+    return messages.at(-1)?.text ? truncate(messages.at(-1)!.text) : undefined;
   }
 
   /** The session may have just gone idle: run what waits for that. */

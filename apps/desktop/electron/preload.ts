@@ -339,6 +339,19 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.selectSession, target) as Promise<DesktopAppState>,
   renameSession: (target: WorkspaceSessionTarget, title: string) =>
     ipcRenderer.invoke(desktopIpc.renameSession, target, title) as Promise<DesktopAppState>,
+  editTranscriptMessage: (target: WorkspaceSessionTarget, messageId: string, text: string) =>
+    ipcRenderer.invoke(
+      desktopIpc.editTranscriptMessage,
+      target,
+      messageId,
+      text,
+    ) as Promise<DesktopAppState>,
+  deleteTranscriptMessage: (target: WorkspaceSessionTarget, messageId: string) =>
+    ipcRenderer.invoke(
+      desktopIpc.deleteTranscriptMessage,
+      target,
+      messageId,
+    ) as Promise<DesktopAppState>,
   archiveSession: (target: WorkspaceSessionTarget) =>
     ipcRenderer.invoke(desktopIpc.archiveSession, target) as Promise<DesktopAppState>,
   unarchiveSession: (target: WorkspaceSessionTarget) =>

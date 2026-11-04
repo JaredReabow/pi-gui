@@ -151,6 +151,14 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
     return this.supervisor.renameSession(sessionRef, title);
   }
 
+  editTranscriptMessage(sessionRef: SessionRef, messageId: string, text: string): Promise<void> {
+    return this.supervisor.editTranscriptMessage(sessionRef, messageId, text);
+  }
+
+  deleteTranscriptMessage(sessionRef: SessionRef, messageId: string): Promise<void> {
+    return this.supervisor.deleteTranscriptMessage(sessionRef, messageId);
+  }
+
   compactSession(sessionRef: SessionRef, customInstructions?: string): Promise<void> {
     return this.supervisor.compactSession(sessionRef, customInstructions);
   }

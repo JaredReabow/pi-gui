@@ -32,9 +32,14 @@ import {
   parseExtensionAction,
 } from "@pi-gui/session-driver";
 import type { SessionQueuedMessage } from "@pi-gui/session-driver/types";
-
-const FILE_ATTACHMENT_BLOCK_START = "<pi-gui-file-attachments>";
-const FILE_ATTACHMENT_BLOCK_END = "</pi-gui-file-attachments>";
+import {
+  PI_GUI_FILE_ATTACHMENT_BLOCK_END,
+  PI_GUI_FILE_ATTACHMENT_BLOCK_START,
+  transcriptHistory_hiddenToolCallIds,
+  transcriptHistory_overlays,
+  transcriptHistory_replacementContent,
+  type TranscriptHistoryMutation,
+} from "./transcript-history.js";
 
 export interface SnapshotSource {
   readonly ref: SessionRef;
@@ -363,13 +368,17 @@ export function injectFileAttachmentPreamble(
       ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
     })),
   });
-  const block = `${FILE_ATTACHMENT_BLOCK_START}${payload}${FILE_ATTACHMENT_BLOCK_END}`;
+  const block = `${PI_GUI_FILE_ATTACHMENT_BLOCK_START}${payload}${PI_GUI_FILE_ATTACHMENT_BLOCK_END}`;
   return text ? `${block}\n${text}` : block;
 }
 
 /** One thing the transcript draws: a context message, or a custom entry pi itself projects to nothing. */
 type DisplaySource =
-  | { readonly kind: "message"; readonly message: unknown }
+  | {
+      readonly kind: "message";
+      readonly message: unknown;
+      readonly history?: TranscriptHistoryMutation;
+    }
   | {
       readonly kind: "card";
       readonly item: SessionTranscriptCard | SessionTranscriptCustomMessage;
@@ -393,15 +402,22 @@ export function transcriptFromSession(
   sessionManager: Pick<SessionManager, "buildContextEntries" | "getBranch">,
   fallbackTimestamp = nowIso(),
 ): SessionTranscriptItem[] {
+  const branch = sessionManager.getBranch();
+  const overlays = transcriptHistory_overlays(branch);
   return [
-    ...transcriptFromSources(displaySourcesFromSession(sessionManager), fallbackTimestamp),
-    ...pinsFromBranch(sessionManager.getBranch()),
+    ...transcriptFromSources(
+      displaySourcesFromSession(sessionManager, overlays),
+      fallbackTimestamp,
+      transcriptHistory_hiddenToolCallIds(branch, overlays),
+    ),
+    ...pinsFromBranch(branch),
   ];
 }
 
 function transcriptFromSources(
   sources: readonly DisplaySource[],
   fallbackTimestamp: string,
+  hiddenToolCallIds: ReadonlySet<string> = new Set(),
 ): SessionTranscriptItem[] {
   const transcript: SessionTranscriptItem[] = [];
   const toolIndexByCallId = new Map<string, number>();
@@ -427,8 +443,12 @@ function transcriptFromSources(
 
     const role = message.role;
     const createdAt = messageCreatedAt(message, fallbackTimestamp);
+    const history = source.history;
 
     if (role === "toolResult") {
+      if (typeof message.toolCallId === "string" && hiddenToolCallIds.has(message.toolCallId)) {
+        continue;
+      }
       applyToolResult(transcript, toolIndexByCallId, message, createdAt);
       continue;
     }
@@ -452,7 +472,7 @@ function transcriptFromSources(
       continue;
     }
 
-    const text = messageText(message);
+    const text = history?.action === "edit" ? history.text : messageText(message);
     const attachments = messageAttachments(message);
     if (text || attachments.length > 0) {
       transcript.push({
@@ -501,10 +521,22 @@ export function customMessageTranscriptItem(
  * projector supplies the original message and summary content for that range.
  */
 export function displayMessagesFromSession(
-  sessionManager: Pick<SessionManager, "buildContextEntries">,
+  sessionManager: Pick<SessionManager, "buildContextEntries" | "getBranch">,
 ) {
   return displaySourcesFromSession(sessionManager).flatMap((source) =>
-    source.kind === "message" ? [source.message] : [],
+    source.kind === "message"
+      ? [
+          source.history?.action === "edit" && isRecord(source.message)
+            ? {
+                ...source.message,
+                content: transcriptHistory_replacementContent(
+                  source.message.content,
+                  source.history.text,
+                ),
+              }
+            : source.message,
+        ]
+      : [],
   );
 }
 
@@ -513,8 +545,11 @@ export function displayMessagesFromSession(
  * messages, so cards are read from the entries directly.
  */
 function displaySourcesFromSession(
-  sessionManager: Pick<SessionManager, "buildContextEntries">,
+  sessionManager: Pick<SessionManager, "buildContextEntries" | "getBranch">,
+  suppliedOverlays?: ReadonlyMap<string, TranscriptHistoryMutation>,
 ): DisplaySource[] {
+  const historyByTarget =
+    suppliedOverlays ?? transcriptHistory_overlays(sessionManager.getBranch());
   return sessionManager.buildContextEntries().flatMap((entry, index): DisplaySource[] => {
     if (isExtensionCardEntry(entry)) {
       return [{ kind: "card", item: transcriptItemFromCardEntry(entry) }];
@@ -527,9 +562,12 @@ function displaySourcesFromSession(
     // A retained range can contain older compactions. Only the latest one,
     // which Pi places first, contributes a summary (matching Pi's projection).
     if (entry.type === "compaction" && index > 0) return [];
+    const history = historyByTarget.get(entry.id);
+    if (history?.action === "delete") return [];
     return sessionEntryToContextMessages(entry).map((message) => ({
       kind: "message",
       message: { ...message, id: entry.id },
+      ...(history ? { history } : {}),
     }));
   });
 }
@@ -822,14 +860,17 @@ function stripSerializedFileAttachments(
   text: string,
   role: unknown,
 ): { readonly text: string; readonly attachments: readonly SessionTranscriptAttachment[] } {
-  if (role !== "user" || !text.startsWith(FILE_ATTACHMENT_BLOCK_START)) {
+  if (role !== "user" || !text.startsWith(PI_GUI_FILE_ATTACHMENT_BLOCK_START)) {
     return {
       text,
       attachments: [],
     };
   }
 
-  const endIndex = text.indexOf(FILE_ATTACHMENT_BLOCK_END, FILE_ATTACHMENT_BLOCK_START.length);
+  const endIndex = text.indexOf(
+    PI_GUI_FILE_ATTACHMENT_BLOCK_END,
+    PI_GUI_FILE_ATTACHMENT_BLOCK_START.length,
+  );
   if (endIndex < 0) {
     return {
       text,
@@ -837,8 +878,10 @@ function stripSerializedFileAttachments(
     };
   }
 
-  const payload = text.slice(FILE_ATTACHMENT_BLOCK_START.length, endIndex);
-  const remainder = text.slice(endIndex + FILE_ATTACHMENT_BLOCK_END.length).replace(/^\n+/, "");
+  const payload = text.slice(PI_GUI_FILE_ATTACHMENT_BLOCK_START.length, endIndex);
+  const remainder = text
+    .slice(endIndex + PI_GUI_FILE_ATTACHMENT_BLOCK_END.length)
+    .replace(/^\n+/, "");
   const attachments = parseSerializedFileAttachments(payload);
   if (attachments.length === 0) {
     return {
