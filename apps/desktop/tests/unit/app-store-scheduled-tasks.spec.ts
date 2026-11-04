@@ -116,6 +116,7 @@ function createHost(
       return message.id;
     },
     transcriptFor: (ref) => host.transcripts.get(`${ref.workspaceId}:${ref.sessionId}`) ?? [],
+    hasQueuedComposerMessages: () => false,
   };
   return host;
 }

@@ -1245,7 +1245,7 @@ export class DesktopAppStore {
         runtime?.models.map((model) => ({
           provider: model.providerId,
           modelId: model.modelId,
-          label: model.label,
+          ...(model.label ? { label: model.label } : {}),
           available: model.available,
           reasoning: model.reasoning,
           scope: model.scope,

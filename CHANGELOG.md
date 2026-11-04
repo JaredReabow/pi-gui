@@ -65,6 +65,8 @@
   the legacy `selection` field beside the documented top-level `model` and `thinkingLevel`.
   The top-level model remains authoritative, while `thinkingLevel` can combine with the
   provider/model identity in `selection`.
+- Child-model discovery now omits absent optional labels from its sanitized snapshot instead
+  of serializing `undefined`, keeping the orchestration capability contract exact.
 - Added a first-launch project importer for Cursor, Claude and ChatGPT. It discovers local
   project workspace metadata, expands multi-root Cursor workspaces, reviews every candidate
   locally, imports only selected folders, and recommends a connected model for intervention.
