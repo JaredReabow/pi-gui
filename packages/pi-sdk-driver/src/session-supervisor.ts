@@ -1950,7 +1950,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     if (
       isRecordBusy(record) ||
       record.runAwaitingSettle ||
-      record.status !== "idle" ||
+      record.status === "running" ||
       record.queuedMessages.length > 0 ||
       record.queuedStartScheduled ||
       record.sendsSettling > 0 ||

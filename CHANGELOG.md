@@ -9,6 +9,8 @@
   second confirmation, and both actions stay disabled while a run or queue is active.
   Changes are recorded as branch-local append-only history markers, so the transcript
   updates immediately and survives restart without corrupting Pi's session tree.
+- History editing and deletion remain available after a run ends in a failed state; active
+  runs and pending work continue to lock those actions.
 - User messages in the transcript now show a locale-aware sent date and time beside the
   message bubble. Queued messages use their actual send-event time rather than the earlier
   queue-creation time.

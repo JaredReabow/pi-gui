@@ -82,6 +82,20 @@ await test("edits and deletions update visible history and model context across 
   runtimeSession.refreshContext();
   forcePersistPiSession(manager);
 
+  const liveRecord = [
+    ...(
+      supervisor as unknown as {
+        records: Map<string, { status: string }>;
+      }
+    ).records.values(),
+  ][0]!;
+  liveRecord.status = "running";
+  await assert.rejects(
+    supervisor.editTranscriptMessage(snapshot.ref, userId, "Must not be written"),
+    /Finish or stop the current run/,
+  );
+
+  liveRecord.status = "failed";
   await supervisor.editTranscriptMessage(snapshot.ref, userId, "Edited user prompt");
   await supervisor.editTranscriptMessage(snapshot.ref, answerId, "Edited assistant reply");
 
@@ -99,19 +113,24 @@ await test("edits and deletions update visible history and model context across 
   assert.match(JSON.stringify(runtimeSession.messages), /Edited assistant reply/);
   assert.match(JSON.stringify(runtimeSession.messages), /lookup-1/);
 
+  liveRecord.status = "failed";
+  await supervisor.deleteTranscriptMessage(snapshot.ref, userId);
+  assert.deepEqual(
+    (await supervisor.getTranscript(snapshot.ref))
+      .filter((item) => item.kind === "message")
+      .map((item) => ({ id: item.id, text: item.text })),
+    [{ id: answerId, text: "Edited assistant reply" }],
+  );
+
   await supervisor.closeSession(snapshot.ref);
   assert.deepEqual(
     (await supervisor.getTranscript(snapshot.ref))
       .filter((item) => item.kind === "message")
       .map((item) => ({ id: item.id, text: item.text })),
-    [
-      { id: userId, text: "Edited user prompt" },
-      { id: answerId, text: "Edited assistant reply" },
-    ],
+    [{ id: answerId, text: "Edited assistant reply" }],
   );
 
   await supervisor.openSession(snapshot.ref);
-  await supervisor.deleteTranscriptMessage(snapshot.ref, userId);
   await supervisor.deleteTranscriptMessage(snapshot.ref, answerId);
 
   const transcriptAfterDelete = await supervisor.getTranscript(snapshot.ref);
