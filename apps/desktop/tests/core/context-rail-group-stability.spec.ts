@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { join } from "node:path";
 import type { SessionDriverEvent, SessionRef } from "@pi-gui/session-driver";
 import {
   createNamedThread,
@@ -8,6 +9,7 @@ import {
   launchPackagedDesktop,
   makeUserDataDir,
   makeWorkspace,
+  seedAgentDir,
 } from "../helpers/electron-app";
 
 async function selectedSessionRef(
@@ -50,12 +52,17 @@ function toolEvents(
   return events;
 }
 
-test("the pinned prompt remains mounted over an expanded tool group at the latest messages", async ({}, testInfo) => {
+test("the pinned prompt remains mounted over an expanded work summary at the latest messages", async ({}, testInfo) => {
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("context-rail-group-stability");
+  const agentDir = join(userDataDir, "agent");
+  // Injected tools need no provider. The summary's missing-model state must not
+  // make a fixture-backed viewport test contact an external model endpoint.
+  await seedAgentDir(agentDir, { withOpenAiAuth: false, withDefaultModel: false });
   const launch = process.env.PI_APP_TEST_RELEASE_DIR ? launchPackagedDesktop : launchDesktop;
   const harness = await launch(userDataDir, {
     initialWorkspaces: [workspacePath],
+    agentDir,
     testMode: "background",
   });
 
@@ -81,7 +88,7 @@ test("the pinned prompt remains mounted over an expanded tool group at the lates
     ]);
 
     const transcript = window.getByTestId("transcript");
-    const group = transcript.getByTestId("timeline-tool-group");
+    const group = transcript.getByTestId("timeline-work-summary");
     await expect(group).toHaveCount(1);
     await group.locator(".timeline-tool-group__header").click();
     await expect(group.locator(".timeline-tool")).toHaveCount(45);

@@ -1,3 +1,9 @@
+import { WorkSummaryOwner } from "../conversation/work-summary-owner";
+import type {
+  SummaryTarget,
+  SummaryPreferenceUpdate,
+  WorkSummaryRequest,
+} from "../../contracts/work-summaries";
 import type {
   ChildModelSelection,
   SessionInitiatingOrigin,
@@ -294,6 +300,7 @@ export class DesktopAppStore {
   private readonly sessionSchemaInfoCache = new Map<string, SessionSchemaInfo>();
   private readonly sessionSchemaInfoInFlight = new Set<string>();
   private readonly driver: PiSdkDriver;
+  private readonly workSummaries: WorkSummaryOwner;
   private readonly catalogStore: JsonCatalogStore;
   private readonly worktreeManager: GitWorktreeManager;
   private readonly worktreeRoot: string;
@@ -354,6 +361,7 @@ export class DesktopAppStore {
   private readonly extensionFlagsByWorkspace = new Map<string, ExtensionFlagValues>();
 
   constructor(options: DesktopAppStoreOptions) {
+    this.workSummaries = new WorkSummaryOwner(join(options.userDataDir, "work-summaries.json"));
     const catalogFilePath = join(options.userDataDir, "catalogs.json");
     this.catalogStore = new JsonCatalogStore({ catalogFilePath });
     const driverOptions: PiSdkDriverConfig = {
@@ -362,6 +370,7 @@ export class DesktopAppStore {
       isBuiltinExtensionEnabled: (name) => !this.disabledBuiltinExtensions.has(name),
       extensionFlagValuesForSession: (sessionRef) =>
         this.sessionState.extensionFlagsBySession.get(sessionKey(sessionRef)),
+      summaryModelForSession: async (ref) => (await this.workSummaries.preferences(ref)).model,
       ...(options.generateThreadTitleOverride
         ? { generateThreadTitleOverride: options.generateThreadTitleOverride }
         : {}),
@@ -811,6 +820,41 @@ export class DesktopAppStore {
   async getStateForView(view: DesktopAppViewState): Promise<DesktopAppState> {
     await this.initialize();
     return this.projectStateForView(view);
+  }
+
+  closeSummaryRequests(): Promise<void> {
+    return this.workSummaries.close();
+  }
+
+  async getSummaryPreferences(target?: SummaryTarget) {
+    await this.initialize();
+    if (target && !this.sessionFromState(target)) throw new Error("Unknown summary thread");
+    return this.workSummaries.preferences(target);
+  }
+
+  async setSummaryPreferences(input: SummaryPreferenceUpdate) {
+    await this.getSummaryPreferences(input.target);
+    return this.workSummaries.update(input);
+  }
+
+  async summarizeTurn(input: WorkSummaryRequest) {
+    if (!(await this.getSummaryPreferences(input.target)).enabled)
+      return { error: "AI work summaries are off" };
+    await this.ensureSessionReady(input.target);
+    const config = this.sessionFromState(input.target)?.config;
+    return this.workSummaries.summarize({
+      ...input,
+      transcript: (this.sessionState.transcriptCache.get(sessionKey(input.target)) ?? []).filter(
+        (item) => item.kind !== "pin",
+      ),
+      running: this.sessionFromState(input.target)?.status === "running",
+      chatModel:
+        config?.provider && config.modelId
+          ? { provider: config.provider, modelId: config.modelId }
+          : null,
+      generate: (prompt, model, signal) =>
+        this.driver.summarizeWork(input.target, prompt, model, signal),
+    });
   }
 
   async getSelectedTranscript(): Promise<SelectedTranscriptRecord | null> {

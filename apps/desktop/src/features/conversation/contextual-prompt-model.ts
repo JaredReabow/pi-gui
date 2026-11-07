@@ -64,7 +64,7 @@ function transcriptIndexForItem(
     (entry) => entry.id === item.id || sourceMessageId(entry) === item.id,
   );
   if (direct >= 0) return direct;
-  if (item.kind !== "tool-group") return -1;
+  if (item.kind !== "tool-group" && item.kind !== "work-summary") return -1;
 
   const indices = item.items
     .map((tool) =>

@@ -33,11 +33,14 @@ import type {
 } from "../settings/model-onboarding";
 import { ContextMeter } from "./context-meter";
 import { ModelSelector } from "./model-selector";
+import { SummaryModelSelector } from "./summary-controls";
+import type { SummaryTarget } from "../../../contracts/work-summaries";
 import { ExtensionNotices } from "../extensions/extension-notices";
 import { ExtensionFlagsBadge } from "../threads/extension-flags-selector";
 import type { ExtensionDockModel } from "../extensions/extension-session-ui";
 
 interface ComposerPanelProps {
+  readonly summaryTarget?: SummaryTarget;
   readonly preparingTaskDraft?: boolean;
   readonly selectedSession: SessionRecord;
   readonly lastError?: string;
@@ -98,6 +101,7 @@ interface ComposerPanelProps {
 }
 
 export function ComposerPanel({
+  summaryTarget,
   preparingTaskDraft = false,
   selectedSession,
   lastError,
@@ -225,6 +229,11 @@ export function ComposerPanel({
                     emptyModelTitle={modelOnboarding.emptyModelTitle}
                     onSetModel={onSetModel}
                     onSetThinking={onSetThinking}
+                  />
+                  <SummaryModelSelector
+                    api={window.piApp}
+                    target={summaryTarget}
+                    runtime={runtime}
                   />
                   <ExtensionFlagsBadge values={extensionFlags} />
                   <ContextMeter usage={usage} />

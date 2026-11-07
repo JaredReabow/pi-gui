@@ -1,3 +1,10 @@
+import type {
+  SummaryTarget,
+  SummaryPreferenceUpdate,
+  SummaryPreferences,
+  WorkSummaryRequest,
+  WorkSummaryResult,
+} from "./work-summaries";
 import type { EffectiveChildModelSettings } from "./child-selection";
 import type {
   ActivityIndicatorStyle,
@@ -203,6 +210,9 @@ export const desktopIpc = {
   setModelSettingsScopeMode: "pi-gui:set-model-settings-scope-mode",
   setDefaultModel: "pi-gui:set-default-model",
   setDefaultThinkingLevel: "pi-gui:set-default-thinking-level",
+  getSummaryPreferences: "pi-gui:get-summary-preferences",
+  setSummaryPreferences: "pi-gui:set-summary-preferences",
+  summarizeTurn: "pi-gui:summarize-turn",
   setSessionModel: "pi-gui:set-session-model",
   setSessionThinkingLevel: "pi-gui:set-session-thinking-level",
   loginProvider: "pi-gui:login-provider",
@@ -1276,6 +1286,9 @@ export interface PiDesktopApi {
     workspaceId: string,
     thinkingLevel: RuntimeSettingsSnapshot["defaultThinkingLevel"],
   ): Promise<DesktopAppState>;
+  getSummaryPreferences(target?: SummaryTarget): Promise<SummaryPreferences>;
+  setSummaryPreferences(input: SummaryPreferenceUpdate): Promise<SummaryPreferences>;
+  summarizeTurn(input: WorkSummaryRequest): Promise<WorkSummaryResult>;
   setSessionModel(
     workspaceId: string,
     sessionId: string,

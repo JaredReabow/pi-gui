@@ -1,3 +1,5 @@
+import { decodeSummaryModel } from "../conversation/work-summary-owner";
+import type { SummaryPreferenceUpdate } from "../../contracts/work-summaries";
 import {
   sidebarPreferences_decodeActivityStyle,
   sidebarPreferences_decodeFolder,
@@ -158,6 +160,9 @@ type ConversationOwner = Pick<
   | "navigateSessionTree"
   | "respondToHostUiRequest"
   | "setSessionModel"
+  | "getSummaryPreferences"
+  | "setSummaryPreferences"
+  | "summarizeTurn"
   | "setSessionThinkingLevel"
   | "withError"
 >;
@@ -288,6 +293,45 @@ export function registerDesktopIpc({
   const handleMainFrame = mainFrameHandler(windows);
   registerReviewRequests(handleMainFrame, owners.review);
   registerExtensionViewRequests(handleMainFrame, windows, owners.extensionViews);
+  handleMainFrame(
+    desktopIpc.getSummaryPreferences,
+    (raw) => (raw === undefined ? undefined : expectSessionTarget(raw)),
+    (target) => owners.conversation.getSummaryPreferences(target),
+  );
+  handleMainFrame(
+    desktopIpc.setSummaryPreferences,
+    (raw): SummaryPreferenceUpdate => {
+      const input = expectRecord(raw, "summary preferences");
+      if (Object.keys(input).some((key) => !["target", "enabled", "model"].includes(key)))
+        throw new Error("Unknown summary preference");
+      return {
+        ...(input.target === undefined ? {} : { target: expectSessionTarget(input.target) }),
+        ...(input.enabled === undefined
+          ? {}
+          : { enabled: expectBoolean(input.enabled, "enabled") }),
+        ...(input.model === undefined ? {} : { model: decodeSummaryModel(input.model) }),
+      };
+    },
+    (input) => owners.conversation.setSummaryPreferences(input),
+  );
+  handleMainFrame(
+    desktopIpc.summarizeTurn,
+    (raw) => {
+      const input = expectRecord(raw, "work summary");
+      const promptId = expectNonEmptyString(input.promptId, "promptId");
+      if (
+        promptId.length > 300 ||
+        Object.keys(input).some((key) => !["target", "promptId", "retry"].includes(key))
+      )
+        throw new Error("Invalid summary request");
+      return {
+        target: expectSessionTarget(input.target),
+        promptId,
+        ...(input.retry === undefined ? {} : { retry: expectBoolean(input.retry, "retry") }),
+      };
+    },
+    (input) => owners.conversation.summarizeTurn(input),
+  );
   const workbench = new WorkbenchRequests(owners.workbench);
   const workbenchSenders = new WeakSet<Electron.WebContents>();
   const trackWorkbenchSender = (sender: Electron.WebContents) => {

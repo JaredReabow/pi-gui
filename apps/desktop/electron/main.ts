@@ -1558,7 +1558,13 @@ app.on("before-quit", (event) => {
     ? // Renderers send their debounced drafts first so the store flush includes them.
       composerDraftFlusher
         .flush(windowOwner.allWindows())
-        .then(() => Promise.all([store.flushPersistence(), extensionViewOwner?.dispose()]))
+        .then(() =>
+          Promise.all([
+            store.closeSummaryRequests(),
+            store.flushPersistence(),
+            extensionViewOwner?.dispose(),
+          ]),
+        )
     : Promise.resolve();
   const flush = Promise.all([applicationFlush, telemetryShutdown]).catch((error: unknown) => {
     console.error("pi-gui: persistence flush failed during quit:", error);

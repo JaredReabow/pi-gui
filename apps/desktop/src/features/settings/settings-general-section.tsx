@@ -6,6 +6,7 @@ import { useTranslation, type MessageKey } from "../../i18n";
 import { ActivityIndicator } from "../../ui/activity-indicator";
 import { SettingsSegmented, SettingsSelect, SettingsSwitch } from "./settings-controls";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
+import { SummarySettingsRow } from "../conversation/summary-controls";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
@@ -56,6 +57,7 @@ export function SettingsGeneralSection({
   return (
     <>
       <SettingsGroup title={t("settings.general.groupAgent")}>
+        <SummarySettingsRow api={window.piApp} />
         <SettingsRow
           title={t("settings.general.modelScope.title")}
           description={t("settings.general.modelScope.description")}

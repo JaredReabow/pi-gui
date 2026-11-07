@@ -8,6 +8,8 @@ import {
 } from "./composer-commands";
 
 export interface ModelSelectorProps {
+  readonly modelLabelPrefix?: string;
+  readonly onFollowChat?: () => void;
   readonly runtime: RuntimeSnapshot | undefined;
   readonly provider: string | undefined;
   readonly modelId: string | undefined;
@@ -25,6 +27,8 @@ export interface ModelSelectorProps {
 type OpenDropdown = "none" | "model" | "thinking";
 
 export function ModelSelector({
+  modelLabelPrefix,
+  onFollowChat,
   runtime,
   provider,
   modelId,
@@ -104,9 +108,11 @@ export function ModelSelector({
           <button
             className="model-selector__badge"
             type="button"
+            aria-label={modelLabelPrefix ? `${modelLabelPrefix} model` : undefined}
             disabled={disabled}
             onClick={() => setOpen(open === "model" ? "none" : "model")}
           >
+            {modelLabelPrefix && provider && modelId ? `${modelLabelPrefix}: ` : ""}
             {modelBadgeLabel}
           </button>
           {open === "model" ? (
@@ -123,6 +129,18 @@ export function ModelSelector({
                   autoFocus
                 />
               </div>
+              {onFollowChat ? (
+                <button
+                  type="button"
+                  className="model-selector__item"
+                  onClick={() => {
+                    onFollowChat();
+                    setOpen("none");
+                  }}
+                >
+                  Same as chat
+                </button>
+              ) : null}
               {groupedModels.map((group) => (
                 <div key={group.provider}>
                   <div className="model-selector__group-title">{group.provider}</div>

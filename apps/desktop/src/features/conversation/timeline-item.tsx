@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react";
+import { WorkSummaryItem } from "./work-summary-item";
 import type {
   SessionTranscriptCustomMessage,
   SessionTranscriptMessage,
@@ -128,6 +129,27 @@ export function TimelineItem({
           expanded={expandedToolCallIds?.has(item.callId) ?? false}
           onToggle={onToggleToolCall}
           onViewFileInDiff={onViewFileInDiff}
+        />
+      );
+    case "work-summary":
+      return (
+        <WorkSummaryItem
+          item={item}
+          expanded={expandedToolGroupIds?.has(item.id) ?? false}
+          onToggle={onToggleToolGroup}
+          renderItem={(entry) => (
+            <TimelineItem
+              item={entry}
+              expandedToolCallIds={expandedToolCallIds}
+              onToggleToolCall={onToggleToolCall}
+              onViewFileInDiff={onViewFileInDiff}
+              workspacePath={workspacePath}
+              onOpenWorkspaceFileLine={onOpenWorkspaceFileLine}
+              onEditMessage={onEditMessage}
+              onDeleteMessage={onDeleteMessage}
+              historyDisabledReason={historyDisabledReason}
+            />
+          )}
         />
       );
     case "tool-group":

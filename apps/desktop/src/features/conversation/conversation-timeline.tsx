@@ -143,13 +143,21 @@ export function ConversationTimeline({
   }, [transcript]);
   useLayoutEffect(() => {
     const available = new Set(
-      timelineRows.flatMap((item) => (item.kind === "tool-group" ? [item.id] : [])),
+      timelineRows.flatMap((item) =>
+        item.kind === "tool-group" || item.kind === "work-summary" ? [item.id] : [],
+      ),
     );
+    // Late tool updates can briefly unfold a completed span. Keep its expansion
+    // choice while its prompt still exists, instead of collapsing it on reappearance.
+    for (const item of transcript) {
+      if (item.kind === "message" && item.role === "user")
+        available.add(`work-summary:${item.sourceMessageId ?? item.id}`);
+    }
     setExpandedToolGroupIds((current) => {
       if ([...current].every((id) => available.has(id))) return current;
       return new Set([...current].filter((id) => available.has(id)));
     });
-  }, [timelineRows]);
+  }, [timelineRows, transcript]);
   const renderedMessageIndexById = useMemo(() => {
     const indices = new Map<string, number>();
     let index = 0;

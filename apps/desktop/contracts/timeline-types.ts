@@ -99,7 +99,20 @@ export interface TimelineWorkingIndicator {
   readonly startedAt?: string;
 }
 
+export interface TimelineWorkSummary {
+  readonly kind: "work-summary";
+  readonly id: string;
+  readonly createdAt: string;
+  readonly promptId: string;
+  readonly prompt: string;
+  readonly items: readonly TimelineTranscriptItem[];
+  readonly target: { readonly workspaceId: string; readonly sessionId: string };
+  readonly modelKey: string;
+  readonly autoGenerate: boolean;
+}
+
 export type DisplayTimelineItem =
+  | TimelineWorkSummary
   | TimelineTranscriptItem
   | TimelineToolGroup
   | TimelineTurnMarker

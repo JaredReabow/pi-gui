@@ -245,6 +245,15 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
     return this.supervisor.getSessionSchemaInfo(sessionRef);
   }
 
+  summarizeWork(
+    sessionRef: SessionRef,
+    prompt: string,
+    model: SessionModelSelection | null,
+    signal: AbortSignal,
+  ) {
+    return this.supervisor.summarizeWork(sessionRef, prompt, model, signal);
+  }
+
   generateThreadTitle(
     workspace: WorkspaceRef,
     options: GenerateThreadTitleOptions,

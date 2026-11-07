@@ -32,6 +32,8 @@ export function estimateRowHeight(item: DisplayTimelineItem, width: number): num
     }
     case "tool":
       return 52;
+    case "work-summary":
+      return 96;
     case "tool-group":
       return 40;
     case "summary":
@@ -71,6 +73,13 @@ export function sameRowContent(a: DisplayTimelineItem, b: DisplayTimelineItem): 
         a.detail === b.detail &&
         a.label === b.label &&
         a.metadata === b.metadata
+      );
+    case "work-summary":
+      return (
+        b.kind === a.kind &&
+        a.modelKey === b.modelKey &&
+        a.prompt === b.prompt &&
+        JSON.stringify(a.items) === JSON.stringify(b.items)
       );
     case "tool-group":
       return (

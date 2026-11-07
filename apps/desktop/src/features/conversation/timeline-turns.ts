@@ -5,6 +5,7 @@ import type {
   TimelineTurnMarker,
 } from "../../../contracts/timeline-types";
 import { compactCompletedToolGroups } from "./timeline-tool-groups";
+import { completedWork, type SummaryTarget } from "../../../contracts/work-summaries";
 
 const MIN_WORKED_DURATION_MS = 1_000;
 
@@ -35,6 +36,8 @@ export function buildDisplayTimelineItems(
   transcript: readonly TimelineTranscriptItem[],
   options: {
     readonly lastTurnRunning?: boolean;
+    readonly summaryTarget?: SummaryTarget;
+    readonly summaryModelKey?: string;
     /** When the running turn started; shown as elapsed time on the "Working" line. */
     readonly runningSince?: string;
     readonly turnChanges?: readonly TurnChangeSummary[];
@@ -98,7 +101,7 @@ export function buildDisplayTimelineItems(
 
   const cardsAfter = turnChangeCardPositions(transcript, options.turnChanges ?? []);
   if (markersBefore.size === 0 && cardsAfter.size === 0 && !options.lastTurnRunning) {
-    return compactCompletedToolGroups(transcript);
+    return collapseWork(transcript);
   }
 
   const result: DisplayTimelineItem[] = [];
@@ -118,7 +121,38 @@ export function buildDisplayTimelineItems(
   if (options.lastTurnRunning) {
     result.push({ kind: "working", id: "working-indicator", startedAt: options.runningSince });
   }
-  return compactCompletedToolGroups(result);
+  return collapseWork(result);
+
+  function collapseWork(rows: readonly DisplayTimelineItem[]): readonly DisplayTimelineItem[] {
+    if (!options.summaryTarget) return compactCompletedToolGroups(rows);
+    const spans = completedWork(transcript, Boolean(options.lastTurnRunning));
+    const byItem = new Map(
+      spans.flatMap((span) => span.items.map((item) => [item.id, span] as const)),
+    );
+    const emitted = new Set<string>();
+    const folded: DisplayTimelineItem[] = [];
+    for (const row of rows) {
+      const span = byItem.get(row.id);
+      if (!span) {
+        folded.push(row);
+        continue;
+      }
+      if (emitted.has(span.promptId)) continue;
+      emitted.add(span.promptId);
+      folded.push({
+        kind: "work-summary",
+        id: `work-summary:${span.promptId}`,
+        promptId: span.promptId,
+        prompt: span.prompt,
+        createdAt: span.items[0]!.createdAt,
+        items: span.items,
+        target: options.summaryTarget,
+        modelKey: options.summaryModelKey ?? "follow-chat",
+        autoGenerate: spans.indexOf(span) >= spans.length - 3,
+      });
+    }
+    return compactCompletedToolGroups(folded);
+  }
 }
 
 function turnChangeCardPositions(

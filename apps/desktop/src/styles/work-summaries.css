@@ -1,0 +1,27 @@
+.timeline-work-summary__header {
+  align-items: flex-start;
+  min-height: 48px;
+}
+.timeline-work-summary__text {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.5;
+  text-align: left;
+}
+.timeline-work-summary__note,
+.timeline-work-summary__generate {
+  display: block;
+  margin: 0 14px 10px 40px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.timeline-work-summary__generate {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.composer__config {
+  flex-wrap: wrap;
+}

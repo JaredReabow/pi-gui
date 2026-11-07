@@ -17,7 +17,7 @@ import { canTogglePrimarySidebar } from "./app-shell-utils";
 import { useDesktopCommands } from "./use-desktop-commands";
 import { useRunningLabel } from "../features/conversation/hooks/use-running-label";
 import { useTimelineViewport } from "../features/conversation/hooks/use-timeline-viewport";
-import { buildDisplayTimelineItems } from "../features/conversation/timeline-turns";
+import { useSummaryTimeline } from "../features/conversation/summary-controls";
 import { useTurnChanges } from "../features/conversation/hooks/use-turn-changes";
 import { restoreTopmostDialogFocus } from "../ui/dialog-focus";
 import { ComposerPanel } from "../features/conversation/composer-panel";
@@ -332,15 +332,14 @@ export default function App() {
     running: selectedSessionRunning,
     workbench,
   });
-  const timelineRows = useMemo(
-    () =>
-      buildDisplayTimelineItems(pins.timeline, {
-        lastTurnRunning: selectedSessionRunning,
-        runningSince: selectedSessionRunning ? selectedSession?.runningSince : undefined,
-        turnChanges: turnChanges.turns,
-      }),
-    [pins.timeline, selectedSessionRunning, selectedSession?.runningSince, turnChanges.turns],
-  );
+  const timelineRows = useSummaryTimeline({
+    api,
+    target: workbenchTarget ?? undefined,
+    transcript: pins.timeline,
+    session: selectedSession,
+    turnChanges: turnChanges.turns,
+    chatModelKey: `${resolvedSessionProvider}/${resolvedSessionModelId}`,
+  });
   const viewport = useTimelineViewport({
     sessionKey: selectedSessionKey,
     rows: timelineRows,
@@ -1255,6 +1254,7 @@ export default function App() {
                 />
               ) : null}
               <ComposerPanel
+                summaryTarget={workbenchTarget ?? undefined}
                 key={selectedSessionKey}
                 preparingTaskDraft={extensionHostActions.preparingTaskDraft}
                 activeSlashCommand={slashMenu.activeSlashFlow?.command}
