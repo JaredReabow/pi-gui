@@ -1,4 +1,6 @@
 import { WorkSummaryOwner } from "../conversation/work-summary-owner";
+import { AutonomyStore } from "../conversation/autonomy-store";
+import type { AutonomyUpdate } from "../../contracts/autonomy";
 import type {
   SummaryTarget,
   SummaryPreferenceUpdate,
@@ -301,6 +303,7 @@ export class DesktopAppStore {
   private readonly sessionSchemaInfoInFlight = new Set<string>();
   private readonly driver: PiSdkDriver;
   private readonly workSummaries: WorkSummaryOwner;
+  private readonly autonomy: AutonomyStore;
   private readonly catalogStore: JsonCatalogStore;
   private readonly worktreeManager: GitWorktreeManager;
   private readonly worktreeRoot: string;
@@ -362,6 +365,7 @@ export class DesktopAppStore {
 
   constructor(options: DesktopAppStoreOptions) {
     this.workSummaries = new WorkSummaryOwner(join(options.userDataDir, "work-summaries.json"));
+    this.autonomy = new AutonomyStore(join(options.userDataDir, "autonomy.json"));
     const catalogFilePath = join(options.userDataDir, "catalogs.json");
     this.catalogStore = new JsonCatalogStore({ catalogFilePath });
     const driverOptions: PiSdkDriverConfig = {
@@ -371,6 +375,8 @@ export class DesktopAppStore {
       extensionFlagValuesForSession: (sessionRef) =>
         this.sessionState.extensionFlagsBySession.get(sessionKey(sessionRef)),
       summaryModelForSession: async (ref) => (await this.workSummaries.preferences(ref)).model,
+      autonomyForSession: (ref) => this.autonomy.get(ref),
+      autonomyProtectedPaths: [options.userDataDir],
       ...(options.generateThreadTitleOverride
         ? { generateThreadTitleOverride: options.generateThreadTitleOverride }
         : {}),
@@ -820,6 +826,38 @@ export class DesktopAppStore {
   async getStateForView(view: DesktopAppViewState): Promise<DesktopAppState> {
     await this.initialize();
     return this.projectStateForView(view);
+  }
+
+  async getAutonomyPreferences(target?: SummaryTarget) {
+    await this.initialize();
+    if (target && !this.sessionFromState(target)) throw new Error("Unknown autonomy thread");
+    return this.autonomy.get(target);
+  }
+  async setAutonomyPreferences(input: AutonomyUpdate) {
+    await this.getAutonomyPreferences(input.target);
+    if (input.mode === "full-access" && input.confirmFullAccess !== true)
+      throw new Error("Full access requires confirmation");
+    // Revoking/changing permissions must stop pending approvals and running tools.
+    const targets = input.target
+      ? [input.target]
+      : this.state.workspaces.flatMap((workspace) =>
+          workspace.sessions
+            .filter((session) => session.status === "running")
+            .map((session) => ({ workspaceId: workspace.id, sessionId: session.id })),
+        );
+    // Publish authority first: every subsequent tool decision waits for this
+    // queued durable write, even while an old run is slow to acknowledge Stop.
+    const saved = await this.autonomy.set(input);
+    const stopped = await Promise.allSettled(
+      targets
+        .filter((target) => this.sessionFromState(target)?.status === "running")
+        .map((target) => this.driver.cancelCurrentRun(target)),
+    );
+    if (stopped.some((result) => result.status === "rejected"))
+      throw new Error(
+        "Access preferences were saved, but one or more active runs could not be stopped. Stop those runs manually.",
+      );
+    return saved;
   }
 
   closeSummaryRequests(): Promise<void> {

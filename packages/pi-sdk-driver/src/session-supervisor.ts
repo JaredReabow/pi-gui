@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   ModelRegistry,
   ModelRuntime,
+  getAgentDir,
   SessionManager,
   type AgentSessionRuntime,
   type AgentSession,
@@ -128,6 +129,7 @@ import { forcePersistPiSession } from "./compat/pi-session-persistence.js";
 import { createTurnCaptureExtension } from "./turn-capture.js";
 import { createTranscriptIdentityExtension } from "./transcript-identity.js";
 import { createSummaryCompactionExtension } from "./summary-compaction.js";
+import { createAutonomyExtension } from "./autonomy-extension.js";
 import { createPlanLimitsExtension, readSessionUsage } from "./session-usage.js";
 import {
   createDesktopExtensionBridge,
@@ -206,6 +208,10 @@ export interface PiSdkDriverOptions {
   readonly onTurnCaptureBoundary?: import("@pi-gui/session-driver").TurnCaptureObserver;
   readonly turnCaptureTimeoutMs?: number;
   readonly summaryModelForSession?: (ref: SessionRef) => Promise<SessionModelSelection | null>;
+  readonly autonomyForSession?: (
+    ref: SessionRef,
+  ) => Promise<import("@pi-gui/session-driver").AgentAutonomyPreferences>;
+  readonly autonomyProtectedPaths?: readonly string[];
   readonly generateThreadTitleOverride?: (
     workspace: WorkspaceRef,
     options: import("./thread-title-generator.js").GenerateThreadTitleOptions,
@@ -447,6 +453,22 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
         extensionFactories: [
           ...this.piAddons,
           ...this.builtinExtensions,
+          ...(this.options.autonomyForSession
+            ? [
+                {
+                  name: "pi-gui-autonomy",
+                  hidden: true,
+                  factory: createAutonomyExtension(
+                    workspace.workspaceId,
+                    this.options.autonomyForSession,
+                    [
+                      ...(this.options.autonomyProtectedPaths ?? []),
+                      this.agentDir ?? getAgentDir(),
+                    ],
+                  ),
+                },
+              ]
+            : []),
           ...(this.options.summaryModelForSession
             ? [
                 {

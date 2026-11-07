@@ -1,3 +1,5 @@
+import type { AutonomyUpdate } from "./autonomy";
+import type { AgentAutonomyPreferences } from "@pi-gui/session-driver";
 import type {
   SummaryTarget,
   SummaryPreferenceUpdate,
@@ -210,6 +212,8 @@ export const desktopIpc = {
   setModelSettingsScopeMode: "pi-gui:set-model-settings-scope-mode",
   setDefaultModel: "pi-gui:set-default-model",
   setDefaultThinkingLevel: "pi-gui:set-default-thinking-level",
+  getAutonomyPreferences: "pi-gui:get-autonomy-preferences",
+  setAutonomyPreferences: "pi-gui:set-autonomy-preferences",
   getSummaryPreferences: "pi-gui:get-summary-preferences",
   setSummaryPreferences: "pi-gui:set-summary-preferences",
   summarizeTurn: "pi-gui:summarize-turn",
@@ -1286,6 +1290,8 @@ export interface PiDesktopApi {
     workspaceId: string,
     thinkingLevel: RuntimeSettingsSnapshot["defaultThinkingLevel"],
   ): Promise<DesktopAppState>;
+  getAutonomyPreferences(target?: SummaryTarget): Promise<AgentAutonomyPreferences>;
+  setAutonomyPreferences(input: AutonomyUpdate): Promise<AgentAutonomyPreferences>;
   getSummaryPreferences(target?: SummaryTarget): Promise<SummaryPreferences>;
   setSummaryPreferences(input: SummaryPreferenceUpdate): Promise<SummaryPreferences>;
   summarizeTurn(input: WorkSummaryRequest): Promise<WorkSummaryResult>;

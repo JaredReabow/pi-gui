@@ -1,3 +1,5 @@
+import { decodeAgentAccessMode } from "@pi-gui/session-driver";
+import type { AutonomyUpdate } from "../../contracts/autonomy";
 import { decodeSummaryModel } from "../conversation/work-summary-owner";
 import type { SummaryPreferenceUpdate } from "../../contracts/work-summaries";
 import {
@@ -160,6 +162,8 @@ type ConversationOwner = Pick<
   | "navigateSessionTree"
   | "respondToHostUiRequest"
   | "setSessionModel"
+  | "getAutonomyPreferences"
+  | "setAutonomyPreferences"
   | "getSummaryPreferences"
   | "setSummaryPreferences"
   | "summarizeTurn"
@@ -293,6 +297,34 @@ export function registerDesktopIpc({
   const handleMainFrame = mainFrameHandler(windows);
   registerReviewRequests(handleMainFrame, owners.review);
   registerExtensionViewRequests(handleMainFrame, windows, owners.extensionViews);
+  handleMainFrame(
+    desktopIpc.getAutonomyPreferences,
+    (raw) => (raw === undefined ? undefined : expectSessionTarget(raw)),
+    (target) => owners.conversation.getAutonomyPreferences(target),
+  );
+  handleMainFrame(
+    desktopIpc.setAutonomyPreferences,
+    (raw): AutonomyUpdate => {
+      const input = expectRecord(raw, "autonomy preferences");
+      if (
+        Object.keys(input).some(
+          (key) => !["target", "mode", "reviewModel", "confirmFullAccess"].includes(key),
+        )
+      )
+        throw new Error("Unknown autonomy preference");
+      return {
+        ...(input.target === undefined ? {} : { target: expectSessionTarget(input.target) }),
+        ...(input.mode === undefined ? {} : { mode: decodeAgentAccessMode(input.mode) }),
+        ...(input.reviewModel === undefined
+          ? {}
+          : { reviewModel: decodeSummaryModel(input.reviewModel) }),
+        ...(input.confirmFullAccess === undefined
+          ? {}
+          : { confirmFullAccess: expectBoolean(input.confirmFullAccess, "confirmFullAccess") }),
+      };
+    },
+    (input) => owners.conversation.setAutonomyPreferences(input),
+  );
   handleMainFrame(
     desktopIpc.getSummaryPreferences,
     (raw) => (raw === undefined ? undefined : expectSessionTarget(raw)),

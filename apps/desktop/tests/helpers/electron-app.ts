@@ -739,6 +739,18 @@ async function prepareAgentDir(
     );
   }
 
+  // Legacy fixtures explicitly opt into their pre-permissions capabilities.
+  // A permissions test can preseed a restrictive policy; never overwrite it.
+  // This is private-profile configuration, not a production test-mode bypass.
+  try {
+    await writeFile(
+      join(userDataDir, "autonomy.json"),
+      JSON.stringify({ version: 1, revision: 0, defaultMode: "full-access", sessions: {} }) + "\n",
+      { flag: "wx", mode: 0o600 },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
   if (options.agentDir) {
     return options.agentDir;
   }

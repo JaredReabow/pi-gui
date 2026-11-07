@@ -1,3 +1,5 @@
+export { decodeAgentAccessMode } from "./autonomy.js";
+export type { AgentAccessMode, AgentAutonomyPreferences } from "./autonomy.js";
 export type {
   AssistantDeltaEvent,
   AssistantMessageEndedEvent,

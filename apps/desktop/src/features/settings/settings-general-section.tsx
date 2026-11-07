@@ -7,6 +7,7 @@ import { ActivityIndicator } from "../../ui/activity-indicator";
 import { SettingsSegmented, SettingsSelect, SettingsSwitch } from "./settings-controls";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 import { SummarySettingsRow } from "../conversation/summary-controls";
+import { AutonomyControls } from "../conversation/autonomy-controls";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
@@ -57,6 +58,7 @@ export function SettingsGeneralSection({
   return (
     <>
       <SettingsGroup title={t("settings.general.groupAgent")}>
+        <AutonomyControls global />
         <SummarySettingsRow api={window.piApp} />
         <SettingsRow
           title={t("settings.general.modelScope.title")}

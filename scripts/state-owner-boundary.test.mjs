@@ -32,6 +32,7 @@ const durableStateOwners = [
       "apps/desktop/electron/persistence/attachment-store.ts",
       // Owns the validated, presentation-only summary preferences and cache.
       "apps/desktop/electron/conversation/work-summary-owner.ts",
+      "apps/desktop/electron/conversation/autonomy-store.ts",
       "apps/desktop/electron/scheduled-tasks/scheduled-task-store.ts",
       reviewedStore,
       checkpointStore,

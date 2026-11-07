@@ -430,6 +430,8 @@ contextBridge.exposeInMainWorld("piApp", {
       workspaceId,
       thinkingLevel,
     ) as Promise<DesktopAppState>,
+  getAutonomyPreferences: (target) => ipcRenderer.invoke(desktopIpc.getAutonomyPreferences, target),
+  setAutonomyPreferences: (input) => ipcRenderer.invoke(desktopIpc.setAutonomyPreferences, input),
   getSummaryPreferences: (target) => ipcRenderer.invoke(desktopIpc.getSummaryPreferences, target),
   setSummaryPreferences: (input) => ipcRenderer.invoke(desktopIpc.setSummaryPreferences, input),
   summarizeTurn: (input) => ipcRenderer.invoke(desktopIpc.summarizeTurn, input),
