@@ -429,7 +429,7 @@ test("caps a long Last 7 Days bucket and sorts the folder by last send", async (
     ]);
     await window
       .locator(".workspace-group")
-      .getByRole("button", { name: `Show more ${workspaceName}` })
+      .getByRole("button", { name: `Show 1 hidden thread in ${workspaceName}` })
       .click();
     await expect(folderThreads).toHaveText([
       "Sent later",
@@ -465,6 +465,8 @@ test("caps a long Last 7 Days bucket and sorts the folder by last send", async (
       "Sent later",
     );
     await expect(window.getByRole("region", { name: "Last 7 Days" })).toHaveCount(0);
+    // Show more is a saved view choice too, not reset to five on restart.
+    await expect(window.locator(".workspace-group .session-row__title")).toHaveCount(6);
   } finally {
     await thirdRun.close();
   }

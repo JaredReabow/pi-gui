@@ -1012,9 +1012,7 @@ export default function App() {
       </>
     );
   }
-
   const shellClassName = `shell${snapshot.sidebarCollapsed ? " shell--sidebar-collapsed" : ""}`;
-
   return (
     <div className={shellClassName} style={shellStyle} data-testid="app-shell">
       {primarySidebarToggleVisible ? (
@@ -1030,6 +1028,8 @@ export default function App() {
           activeView={snapshot.activeView}
           selectedWorkspace={selectedWorkspace}
           selectedSession={selectedSession}
+          selectionWorkspaceId={snapshot.selectedWorkspaceId}
+          selectionSessionId={snapshot.selectedSessionId}
           visibleWorkspaces={visibleWorkspaces}
           activityIndicatorStyle={activityIndicatorStyle}
           threadSidebarModel={threadSidebarModel ?? buildThreadSidebarModel(snapshot)}

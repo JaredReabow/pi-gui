@@ -76,6 +76,7 @@ import {
 } from "../../../contracts/ipc";
 import { PaneResizeHandle, type PaneWidthBounds } from "../../ui/pane-resize-handle";
 import { usePersistedPaneWidth } from "../../ui/use-persisted-pane-width";
+import { useSidebarExpansion } from "./use-sidebar-expansion";
 import { ActivityIndicator } from "../../ui/activity-indicator";
 import type { WorkspaceMenuState } from "./hooks/use-workspace-menu";
 import type { ThreadMenuState } from "./hooks/use-thread-actions";
@@ -119,6 +120,9 @@ interface SidebarProps {
   readonly activeView: AppView;
   readonly selectedWorkspace: WorkspaceRecord | undefined;
   readonly selectedSession: SessionRecord | undefined;
+  /** Canonical selection before session/tree metadata has finished hydrating. */
+  readonly selectionWorkspaceId?: string;
+  readonly selectionSessionId?: string;
   readonly visibleWorkspaces: readonly WorkspaceRecord[];
   readonly activityIndicatorStyle?: ActivityIndicatorStyle;
   readonly threadSidebarModel: ThreadSidebarModel;
@@ -206,6 +210,8 @@ export function Sidebar(props: SidebarProps) {
     activeView,
     selectedWorkspace,
     selectedSession,
+    selectionWorkspaceId,
+    selectionSessionId,
     visibleWorkspaces,
     activityIndicatorStyle = sidebarPreferences_defaultActivityStyle,
     threadSidebarModel,
@@ -237,16 +243,32 @@ export function Sidebar(props: SidebarProps) {
   const sidebarWidthStyle: (CSSProperties & { "--sidebar-width": string }) | undefined =
     sidebarWidth === undefined ? undefined : { "--sidebar-width": `${sidebarWidth}px` };
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [archivedOpen, setArchivedOpen] = useState(false);
-  const [expandedHistory, setExpandedHistory] = useState<ReadonlySet<string>>(() => new Set());
-  const [collapsedThreads, setCollapsedThreads] = useState<ReadonlySet<string>>(() => new Set());
+  const {
+    archivedOpen,
+    setArchivedOpen,
+    expandedHistory,
+    setExpandedHistory,
+    collapsedThreads,
+    setCollapsedThreads,
+  } = useSidebarExpansion();
+  const selectedThreadKey =
+    (selectionWorkspaceId && selectionSessionId
+      ? `${selectionWorkspaceId}:${selectionSessionId}`
+      : undefined) ??
+    (selectedWorkspace && selectedSession
+      ? `${selectedWorkspace.id}:${selectedSession.id}`
+      : undefined);
+  const selectionRevealRef = useRef({ key: selectedThreadKey, allow: false });
   const [markReadReport, setMarkReadReport] = useState<MarkReadReport | undefined>();
-  const toggleThread = (key: string) =>
+  const toggleThread = (key: string) => {
+    // A user's manual fold wins over later catalog/parent-link refreshes.
+    selectionRevealRef.current = { key: selectedThreadKey, allow: false };
     setCollapsedThreads((current) => {
       const next = new Set(current);
       if (!next.delete(key)) next.add(key);
       return next;
     });
+  };
   const commandHeld = useThreadShortcutHintsVisible(api.platform);
   const folderPreference = (workspaceId: string) =>
     sidebarPreferences_folderState(
@@ -255,6 +277,15 @@ export function Sidebar(props: SidebarProps) {
       collapsedWorkspaceIds,
     );
   const setSavedFolderPreference = (workspaceId: string, preference: FolderPreference) => {
+    // An explicit folder fold wins over an older Show more override.
+    if (preference !== "open")
+      setExpandedHistory((current) => {
+        const key = workspaceHistoryExpansionKey(workspaceId);
+        if (!current.has(key)) return current;
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     void updateSnapshot(setSnapshot, async () => {
       await api.setFolderPreference(workspaceId, preference);
       // Keep the legacy ids aligned for older persisted-state readers and rollback.
@@ -273,10 +304,6 @@ export function Sidebar(props: SidebarProps) {
   const sidebarEntriesByKey = new Map(
     threadSidebarModel.recencyOrder.map((entry) => [sessionThreadKey(entry), entry]),
   );
-  const selectedThreadKey =
-    selectedWorkspace && selectedSession
-      ? `${selectedWorkspace.id}:${selectedSession.id}`
-      : undefined;
   const revealPath = (key: string | undefined): ReadonlySet<string> => {
     let cursor = key ? sidebarEntriesByKey.get(key) : undefined;
     const ancestors: string[] = [];
@@ -352,9 +379,9 @@ export function Sidebar(props: SidebarProps) {
     // Reveal once per rename; later list changes should not reopen groups.
   }, [renameSessionId]);
 
-  // Reveal ancestors when another surface selects or renames a nested thread. It runs
-  // once per target and ancestor path, so a parent the user collapses stays collapsed
-  // through later state pushes; a path that changes (links arriving late) reveals again.
+  // Reveal on actual selection changes/rename, not on initial restoration. A saved
+  // fold of the selected child's ancestors must survive startup/remount and late
+  // parent metadata. Explicit navigation still reveals the newly selected path.
   const revealedPathRef = useRef<{ select?: string; rename?: string }>({});
   useEffect(() => {
     const entries = new Map(
@@ -362,7 +389,7 @@ export function Sidebar(props: SidebarProps) {
     );
     let entry = renameSessionId
       ? threadSidebarModel.recencyOrder.find((item) => item.session.id === renameSessionId)
-      : entries.get(`${selectedWorkspace?.id}:${selectedSession?.id}`);
+      : entries.get(selectedThreadKey ?? "");
     const target = entry ? sessionThreadKey(entry) : "";
     const ancestors = new Set<string>();
     while (entry?.parentKey && !ancestors.has(entry.parentKey)) {
@@ -373,20 +400,22 @@ export function Sidebar(props: SidebarProps) {
     // mounted, and ending a rename must not reopen what the user collapsed since.
     const path = [target, ...ancestors].join("\n");
     const kind = renameSessionId ? "rename" : "select";
-    // Each rename is its own reveal, even of the same thread.
+    // Clear rename tracking even when initial selection restoration skips reveal.
     if (!renameSessionId) revealedPathRef.current = { select: revealedPathRef.current.select };
+    if (selectionRevealRef.current.key !== selectedThreadKey) {
+      selectionRevealRef.current = { key: selectedThreadKey, allow: true };
+    }
+    if (!renameSessionId && !selectionRevealRef.current.allow) {
+      revealedPathRef.current.select = path;
+      return;
+    }
     if (revealedPathRef.current[kind] === path) return;
     revealedPathRef.current = { ...revealedPathRef.current, [kind]: path };
     setCollapsedThreads((current) => {
       if (![...ancestors].some((key) => current.has(key))) return current;
       return new Set([...current].filter((key) => !ancestors.has(key)));
     });
-  }, [
-    selectedWorkspace?.id,
-    selectedSession?.id,
-    renameSessionId,
-    threadSidebarModel.recencyOrder,
-  ]);
+  }, [selectedThreadKey, renameSessionId, threadSidebarModel.recencyOrder]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const pinnedSortableId = (thread: ThreadListEntry) => `pinned:${sessionThreadKey(thread)}`;
