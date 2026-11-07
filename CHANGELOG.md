@@ -4,6 +4,11 @@
 
 ### Conversation
 
+- Sessions now read the same shared Pi model catalog as the picker, fixing
+  `Unknown model` errors for newly published Codex Router routes such as
+  `openrouter/openrouter/free`. Each session keeps its own extension runtime and
+  pi-gui's private custom endpoints remain available.
+
 - Saved user messages and assistant replies now expose inline Edit and Delete actions.
   Edits preserve prompt attachments and provenance in model context, deletion requires a
   second confirmation, and both actions stay disabled while a run or queue is active.

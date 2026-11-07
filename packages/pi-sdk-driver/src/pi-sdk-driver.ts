@@ -35,7 +35,10 @@ import {
   type SyncWorkspaceResult,
 } from "./session-supervisor.js";
 import { RuntimeSupervisor, type RuntimeSupervisorOptions } from "./runtime-supervisor.js";
-import { createRuntimeDependencies } from "./runtime-deps.js";
+import {
+  createRuntimeDependencies,
+  runtimeDependencies_createModelRuntime,
+} from "./runtime-deps.js";
 import type { CustomProviderStore } from "./custom-provider-store.js";
 import { generateThreadTitle, type GenerateThreadTitleOptions } from "./thread-title-generator.js";
 
@@ -63,7 +66,12 @@ export class PiSdkDriver implements SessionDriver, InlineWorkerDriverCapability 
     this.customProviderStore = deps.customProviderStore;
     this.generateThreadTitleOverride = options.generateThreadTitleOverride;
 
-    this.supervisor = new SessionSupervisor({ ...options, agentDir: deps.agentDir });
+    this.supervisor = new SessionSupervisor({
+      ...options,
+      agentDir: deps.agentDir,
+      modelRuntimeFactory:
+        options.modelRuntimeFactory ?? (() => runtimeDependencies_createModelRuntime(deps)),
+    });
     this.runtimeSupervisor = new RuntimeSupervisor({ ...options, ...deps });
   }
 

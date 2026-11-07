@@ -180,6 +180,8 @@ async function requireSessionModel(
 }
 
 export interface PiSdkDriverOptions {
+  /** Fresh catalog runtime for each session creation and cwd-bound reload. */
+  readonly modelRuntimeFactory?: PiCreateAgentSessionOptions["modelRuntimeFactory"];
   readonly catalogFilePath?: string;
   /** Existing owner for catalog state. Takes precedence over catalogFilePath when provided. */
   readonly catalogStorage?: SessionFileCatalogStorage;
@@ -375,6 +377,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     options?: PiCreateAgentSessionOptions,
   ) => Promise<AgentSessionRuntime>;
   private readonly agentDir: string | undefined;
+  private readonly modelRuntimeFactory: PiSdkDriverOptions["modelRuntimeFactory"];
   private readonly builtinExtensions: readonly InlineExtension[];
   private readonly piAddons: readonly InlineExtension[];
   private readonly desktopExtensions: PiDesktopExtensionObserver | undefined;
@@ -416,13 +419,14 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
     this.onTurnCaptureBoundary = options.onTurnCaptureBoundary;
     this.turnCaptureTimeoutMs = options.turnCaptureTimeoutMs;
     this.agentDir = options.agentDir;
+    this.modelRuntimeFactory = options.modelRuntimeFactory;
   }
 
   /**
    * Options every session creation shares.
    *
-   * Deliberately no `modelRuntime`: letting `createAgentSessionServices` build
-   * one per session keeps it cwd-bound, so it holds exactly the extension
+   * Deliberately no shared `modelRuntime`: the factory builds one per services
+   * creation, so it holds exactly the extension
    * providers registered for this workspace and cannot pick up another open
    * workspace's endpoint or credentials for the same provider id.
    */
@@ -504,6 +508,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
         ],
       },
       ...(this.agentDir ? { agentDir: this.agentDir } : {}),
+      ...(this.modelRuntimeFactory ? { modelRuntimeFactory: this.modelRuntimeFactory } : {}),
     };
     if (!this.desktopExtensions) return createOptions;
     return {

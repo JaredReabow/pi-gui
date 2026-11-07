@@ -29,7 +29,10 @@ import type {
   RuntimeSnapshot,
 } from "@pi-gui/session-driver/runtime-types";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
-import { createRuntimeDependencies } from "./runtime-deps.js";
+import {
+  createRuntimeDependencies,
+  runtimeDependencies_createModelRuntime,
+} from "./runtime-deps.js";
 import {
   createSettingsManagerWithoutNpmPackages,
   isGlobalNpmLookupError,
@@ -703,14 +706,12 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     readonly accepted: ExtensionProviderRegistration[];
     readonly acceptedNative: ExtensionNativeProviderRegistration[];
   }> {
-    const runtime = await ModelRuntime.create({
+    const runtime = await runtimeDependencies_createModelRuntime({
       authPath: this.authPath,
-      modelsPath: this.modelsJsonPath,
-      refreshOnCreate: false,
+      modelsJsonPath: this.modelsJsonPath,
+      privateModelsJsonPath: this.privateModelsJsonPath,
+      customProviderStore: this.customProviderStore,
     });
-    if (this.modelsJsonPath !== this.privateModelsJsonPath) {
-      await this.customProviderStore.registerInto(runtime);
-    }
     const accepted: ExtensionProviderRegistration[] = [];
     for (const registration of registrations) {
       const { name, config, extensionPath } = registration;

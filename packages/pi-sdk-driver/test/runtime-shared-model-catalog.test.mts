@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RuntimeSupervisor } from "../dist/runtime-supervisor.js";
+import { PiSdkDriver } from "../dist/pi-sdk-driver.js";
 
 function provider(models: readonly string[], apiKey = "shared-key") {
   return {
@@ -107,4 +108,61 @@ await test("shared router catalog stays read-only while private settings and cus
     "private-endpoint",
     "private-second",
   ]);
+});
+
+await test("sessions resolve shared models instead of the private stale catalog", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-gui-shared-session-"));
+  const agentDir = join(root, "private-agent");
+  const cwd = join(root, "workspace");
+  const sharedModelsPath = join(root, "shared-models.json");
+  await Promise.all([mkdir(agentDir), mkdir(cwd)]);
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  });
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("Shared model resolution must not use the network");
+  });
+  await writeFile(join(agentDir, "auth.json"), "{}");
+  await writeFile(join(agentDir, "settings.json"), '{"packages":[]}\n');
+  await writeFile(
+    join(agentDir, "models.json"),
+    JSON.stringify({
+      providers: {
+        "codex-router": { ...provider(["older-model"]), api: "openai-responses" },
+        "private-endpoint": { ...provider(["private-model"]), piGuiCustomEndpoint: true },
+      },
+    }),
+  );
+  await writeFile(
+    sharedModelsPath,
+    JSON.stringify({
+      providers: {
+        "codex-router": {
+          ...provider(["older-model", "openrouter/openrouter/free"]),
+          api: "openai-responses",
+        },
+      },
+    }),
+  );
+  const sharedBefore = await readFile(sharedModelsPath, "utf8");
+  const privateBefore = await readFile(join(agentDir, "models.json"), "utf8");
+  const driver = new PiSdkDriver({
+    agentDir,
+    modelCatalogPath: sharedModelsPath,
+    catalogFilePath: join(root, "catalogs.json"),
+  });
+  const workspace = { workspaceId: "shared-session", path: cwd };
+  for (const initialModel of [
+    { provider: "codex-router", modelId: "openrouter/openrouter/free" },
+    { provider: "codex-router", modelId: "older-model" },
+    { provider: "private-endpoint", modelId: "private-model" },
+  ]) {
+    const session = await driver.createSession(workspace, { initialModel });
+    await driver.closeSession(session.ref);
+  }
+  assert.equal(await readFile(sharedModelsPath, "utf8"), sharedBefore);
+  assert.equal(await readFile(join(agentDir, "models.json"), "utf8"), privateBefore);
 });

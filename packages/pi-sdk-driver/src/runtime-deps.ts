@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { CustomProviderStore } from "./custom-provider-store.js";
 import type { RuntimeSupervisorOptions } from "./runtime-supervisor.js";
 
@@ -29,4 +29,22 @@ export function createRuntimeDependencies(
     authPath,
     customProviderStore,
   };
+}
+
+/** Build an isolated runtime from the shared catalog and private custom endpoints. */
+export async function runtimeDependencies_createModelRuntime(
+  deps: Pick<
+    RuntimeDependencies,
+    "authPath" | "modelsJsonPath" | "privateModelsJsonPath" | "customProviderStore"
+  >,
+): Promise<ModelRuntime> {
+  const runtime = await ModelRuntime.create({
+    authPath: deps.authPath,
+    modelsPath: deps.modelsJsonPath,
+    refreshOnCreate: false,
+  });
+  if (deps.modelsJsonPath !== deps.privateModelsJsonPath) {
+    await deps.customProviderStore.registerInto(runtime);
+  }
+  return runtime;
 }

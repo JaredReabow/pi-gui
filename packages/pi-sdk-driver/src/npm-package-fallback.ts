@@ -20,6 +20,8 @@ export type PiResourceLoaderOptions = NonNullable<
 export type PiModelInfo = NonNullable<CreateAgentSessionOptions["model"]>;
 
 export interface PiCreateAgentSessionOptions extends CreateAgentSessionOptions {
+  /** Rebuild on every services creation so sessions never share extension registrations. */
+  readonly modelRuntimeFactory?: () => Promise<ModelRuntime>;
   readonly resourceLoaderOptions?: PiResourceLoaderOptions;
   /** Extension flag values, applied by pi once the services load the extensions that registered them. */
   readonly extensionFlagValues?: CreateAgentSessionServicesOptions["extensionFlagValues"];
@@ -76,15 +78,20 @@ async function createAgentSessionServicesWithNpmFallback(
   agentDir: string,
   options?: Pick<
     PiCreateAgentSessionOptions,
-    "settingsManager" | "modelRuntime" | "resourceLoaderOptions" | "extensionFlagValues"
+    | "settingsManager"
+    | "modelRuntime"
+    | "modelRuntimeFactory"
+    | "resourceLoaderOptions"
+    | "extensionFlagValues"
   >,
 ) {
+  const modelRuntime = options?.modelRuntime ?? (await options?.modelRuntimeFactory?.());
   try {
     return await createAgentSessionServices({
       cwd,
       agentDir,
       ...(options?.settingsManager ? { settingsManager: options.settingsManager } : {}),
-      ...(options?.modelRuntime ? { modelRuntime: options.modelRuntime } : {}),
+      ...(modelRuntime ? { modelRuntime } : {}),
       ...(options?.resourceLoaderOptions
         ? { resourceLoaderOptions: options.resourceLoaderOptions }
         : {}),
@@ -112,7 +119,7 @@ async function createAgentSessionServicesWithNpmFallback(
       cwd,
       agentDir,
       settingsManager: fallbackSettingsManager,
-      ...(options?.modelRuntime ? { modelRuntime: options.modelRuntime } : {}),
+      ...(modelRuntime ? { modelRuntime } : {}),
       ...(options?.resourceLoaderOptions
         ? { resourceLoaderOptions: options.resourceLoaderOptions }
         : {}),
