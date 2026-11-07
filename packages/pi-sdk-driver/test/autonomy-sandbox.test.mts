@@ -14,7 +14,7 @@ async function fixture() {
   await mkdir(project);
   return { root, project };
 }
-test("canonical paths reject traversal, prefix siblings, links, protected and ambiguous paths", async () => {
+await test("canonical paths reject traversal, prefix siblings, links, protected and ambiguous paths", async () => {
   const { root, project } = await fixture();
   await writeFile(join(root, "outside"), "private");
   await symlink(root, join(project, "escape"));
@@ -35,7 +35,7 @@ test("canonical paths reject traversal, prefix siblings, links, protected and am
     assert.equal((await autonomyPath(project, p)).scoped, false, p);
   assert.equal((await autonomyPath(project, "src/new.ts")).scoped, true);
 });
-test("reviewer JSON is strict and cannot smuggle an allow decision", () => {
+await test("reviewer JSON is strict and cannot smuggle an allow decision", () => {
   assert.equal(
     parseAutonomyReview('{"decision":"allow","risk":"low","reason":"read-only inspection"}')
       .decision,
@@ -50,7 +50,7 @@ test("reviewer JSON is strict and cannot smuggle an allow decision", () => {
   ])
     assert.throws(() => parseAutonomyReview(text));
 });
-test(
+await test(
   "real Seatbelt permits project SDK writes/edits and rejects host writes and linked files",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -91,7 +91,7 @@ test(
     await assert.rejects(access(join(project, "new-hardlink")));
   },
 );
-test(
+await test(
   "real sandbox denies configuration writes, credential reads, network and external IPC",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -133,7 +133,7 @@ test(
     }
   },
 );
-test(
+await test(
   "sandbox cancellation kills an active shell before its later write",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -162,7 +162,7 @@ test(
     await assert.rejects(access(join(project, "late")));
   },
 );
-test(
+await test(
   "cancel during async preparation never launches an action",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -180,7 +180,7 @@ test(
     await assert.rejects(access(join(project, "cancelled")));
   },
 );
-test(
+await test(
   "renaming hardlink ancestors cannot escape project writes",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -199,7 +199,7 @@ test(
     await access(join(project, "dir/alias"));
   },
 );
-test(
+await test(
   "project overlap cannot rewrite authority or rename its ancestors",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -224,7 +224,7 @@ test(
     await assert.rejects(access(join(project, "moved")));
   },
 );
-test(
+await test(
   "single-process confinement rejects orphaning and detached subprocesses",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -246,7 +246,7 @@ test(
     await assert.rejects(access(join(project, "orphan")));
   },
 );
-test(
+await test(
   "file tools cannot read outside-project or case-variant credentials",
   { skip: process.platform !== "darwin" },
   async () => {

@@ -35,7 +35,7 @@ const fixture = async () => {
   await mkdir(project);
   return { root, project };
 };
-test(
+await test(
   "SDK alternate-filename fallbacks never read an unapproved target",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -46,7 +46,7 @@ test(
     );
   },
 );
-test(
+await test(
   "peer process environments and mutating read-only fcntls are denied",
   { skip: process.platform !== "darwin" },
   async (t) => {
@@ -92,7 +92,7 @@ test(
     assert.equal(await readFile(outside, "utf8"), "unchanged");
   },
 );
-test(
+await test(
   "ordinary file reads and writes do not crawl unrelated hardlinks",
   { skip: process.platform !== "darwin" },
   async () => {
