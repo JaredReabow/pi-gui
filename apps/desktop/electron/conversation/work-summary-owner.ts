@@ -77,9 +77,24 @@ export function decodeSavedSummaries(value: unknown): SavedSummaries {
       model: decodeSummaryModel(result.model) ?? undefined,
       truncated: result.truncated === true,
       ...(result.usage === undefined ? {} : { usage: decodeSummaryUsage(result.usage) }),
+      ...(result.request === undefined ? {} : { request: decodeSummaryRequest(result.request) }),
     };
   }
   return { version: 1, enabled: input.enabled, models, cache };
+}
+
+function decodeSummaryRequest(value: unknown): NonNullable<WorkSummaryResult["request"]> {
+  const input = record(value);
+  if (
+    Object.keys(input).some((key) => key !== "api" && key !== "thinkingLevel") ||
+    typeof input.api !== "string" ||
+    !input.api.trim() ||
+    input.api.length > 200 ||
+    typeof input.thinkingLevel !== "string" ||
+    !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(input.thinkingLevel)
+  )
+    throw new Error("Invalid saved summary request policy");
+  return { api: input.api, thinkingLevel: input.thinkingLevel };
 }
 
 function decodeSummaryUsage(value: unknown): NonNullable<WorkSummaryResult["usage"]> {
@@ -180,6 +195,7 @@ export class WorkSummaryOwner {
     ) => Promise<{
       text: string;
       model: SessionModelSelection;
+      request?: WorkSummaryResult["request"];
       usage?: { totalTokens: number; cost: { total: number } };
     }>;
   }): Promise<WorkSummaryResult> {
@@ -269,6 +285,7 @@ export class WorkSummaryOwner {
         const summary: WorkSummaryResult = {
           text: result.text,
           model: result.model,
+          ...(result.request ? { request: result.request } : {}),
           truncated,
           ...(result.usage
             ? { usage: { totalTokens: result.usage.totalTokens, cost: result.usage.cost.total } }
@@ -290,7 +307,9 @@ export class WorkSummaryOwner {
         await write;
         return summary;
       } catch (error) {
-        const failed = { error: String(error).slice(0, 300) };
+        const failed = {
+          error: (error instanceof Error ? error.message : String(error)).slice(0, 1200),
+        };
         if (revision === this.revision && !signal.aborted && !this.closed) {
           this.failures.set(key, failed);
           if (this.failures.size > 300) this.failures.delete(this.failures.keys().next().value!);

@@ -2833,6 +2833,7 @@ export class DesktopAppStore {
         this.sessionState.lastViewedAtBySession,
         this.sessionState.lastInteractedAtBySession,
         this.sessionState.pinnedAtBySession,
+        this.sessionState.compactionBySession,
       );
       const worktreesByWorkspace = buildWorktreeRecords(
         workspacesSnapshot.workspaces,
@@ -3890,6 +3891,12 @@ export class DesktopAppStore {
     if (subscriptionKey !== key) {
       this.migrateSessionSubscriptionKey(subscriptionKey, key);
     }
+    if (
+      event.type === "sessionOpened" ||
+      event.type === "sessionUpdated" ||
+      event.type === "runCompleted"
+    )
+      this.updateSessionCompaction(event.snapshot);
     if (subscriptionKey === key && (await this.applyExtensionUiOnlyEvent(event))) {
       return;
     }
@@ -3986,6 +3993,7 @@ export class DesktopAppStore {
           this.sessionState.extensionUiBySession.delete(key);
           this.sessionState.sessionCommandsBySession.delete(key);
           this.sessionState.sessionUsageBySession.delete(key);
+          this.sessionState.compactionBySession.delete(key);
           this.sessionState.queuedComposerMessagesBySession.delete(key);
           this.sessionState.queuedComposerEditsBySession.delete(key);
           this.clearPendingAutoTitle(event.sessionRef);
@@ -5347,6 +5355,12 @@ export class DesktopAppStore {
     }
   }
 
+  private updateSessionCompaction(snapshot: SessionSnapshot): void {
+    const key = sessionKey(snapshot.ref);
+    // Store ordered absence too, so a late active snapshot cannot resurrect a job.
+    this.sessionState.compactionBySession.set(key, snapshot.compaction);
+  }
+
   private updateLastRunOutcome(snapshot: SessionSnapshot): void {
     const key = sessionKey(snapshot.ref);
     if (snapshot.lastRunOutcome) {
@@ -5421,6 +5435,8 @@ export class DesktopAppStore {
     runtimeByWorkspace?: Record<string, RuntimeSnapshot>,
   ): DesktopAppState {
     const key = sessionKey(sessionRef);
+    const compactionObserved = this.sessionState.compactionBySession.has(key);
+    if (snapshot && !compactionObserved) this.updateSessionCompaction(snapshot);
     // No clone: the cache follows immutable-write discipline (every mutation
     // replaces the array), so this reference is a stable snapshot. Cloning the
     // whole transcript here cost O(thread) allocations per session state sync.
@@ -5440,10 +5456,18 @@ export class DesktopAppStore {
                 }
 
                 return updateSessionRecord(session, {
+                  ...(compactionObserved
+                    ? {
+                        compactionObservation: {
+                          value: this.sessionState.compactionBySession.get(key),
+                        },
+                      }
+                    : {}),
                   snapshot:
                     snapshot || this.sessionState.sessionConfigBySession.has(key)
                       ? {
                           ...snapshot,
+                          ...(snapshot ? { compaction: snapshot.compaction } : {}),
                           config:
                             this.sessionState.sessionConfigBySession.get(key) ?? snapshot?.config,
                         }

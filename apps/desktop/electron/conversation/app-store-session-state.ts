@@ -32,7 +32,10 @@ export function applySessionEventState(
             sessions: workspace.sessions.map((session) =>
               session.id === event.sessionRef.sessionId
                 ? updateSessionRecord(session, {
-                    snapshot: snapshotForEvent(event),
+                    snapshot:
+                      event.type === "sessionClosed"
+                        ? { compaction: undefined }
+                        : snapshotForEvent(event),
                     status: statusForEvent(session.status, event),
                     transcript,
                     preview,
@@ -52,9 +55,14 @@ export function updateSessionRecord(
   session: SessionRecord,
   options: {
     readonly snapshot?: Partial<
-      Pick<SessionSnapshot, "title" | "updatedAt" | "archivedAt" | "preview" | "status" | "config">
+      Pick<
+        SessionSnapshot,
+        "title" | "updatedAt" | "archivedAt" | "preview" | "status" | "config" | "compaction"
+      >
     >;
     readonly status?: SessionRecord["status"];
+    /** Present even for an ordered absence: a stale hydration read cannot revive a job. */
+    readonly compactionObservation?: { readonly value: SessionSnapshot["compaction"] };
     readonly transcript: readonly TranscriptMessage[];
     readonly preview: string | undefined;
     readonly runningSince: string | undefined;
@@ -62,7 +70,20 @@ export function updateSessionRecord(
   },
 ): SessionRecord {
   const updatedAt = options.snapshot?.updatedAt ?? session.updatedAt;
-  const nextStatus = options.status ?? options.snapshot?.status ?? session.status;
+  const observed = options.compactionObservation;
+  const compaction = observed
+    ? observed.value
+    : options.snapshot && "compaction" in options.snapshot
+      ? options.snapshot.compaction
+      : session.compaction;
+  const snapshotStatus =
+    observed && (observed.value || options.snapshot?.compaction)
+      ? session.status
+      : options.snapshot?.status;
+  const nextStatus =
+    compaction?.phase === "summarizing" || compaction?.phase === "retrying"
+      ? "running"
+      : (options.status ?? snapshotStatus ?? session.status);
   const snapshotTitle = options.snapshot?.title;
   // Queued session events may predate a rename; the placeholder must not replace a resolved title.
   const title =
@@ -85,6 +106,7 @@ export function updateSessionRecord(
       options.transcript,
     ),
     config: options.snapshot?.config ?? session.config,
+    compaction,
   };
 }
 
@@ -93,7 +115,8 @@ function snapshotForEvent(event: SessionDriverEvent) {
     case "sessionOpened":
     case "sessionUpdated":
     case "runCompleted":
-      return event.snapshot;
+      // An absent field in a full native snapshot clears a finished runtime job.
+      return { ...event.snapshot, compaction: event.snapshot.compaction };
     default:
       return undefined;
   }

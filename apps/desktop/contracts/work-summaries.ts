@@ -11,6 +11,8 @@ export interface WorkSummaryResult {
   readonly error?: string;
   readonly model?: SessionModelSelection;
   readonly truncated?: boolean;
+  /** Effective SDK request policy; absent in older cached summaries. */
+  readonly request?: { readonly api: string; readonly thinkingLevel: string };
   /** Auxiliary summary usage; kept out of the chat context. */
   readonly usage?: { readonly totalTokens: number; readonly cost: number };
 }

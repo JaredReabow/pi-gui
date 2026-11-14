@@ -185,6 +185,44 @@ function parseCreateInput(
   };
 }
 
+function normalizeOptionalScheduleFields(
+  params: Record<string, unknown>,
+  hasOtherPatch: boolean,
+): Record<string, unknown> {
+  const normalized = { ...params };
+  // Strict tool schemas may require every optional key. Accept null or empty
+  // placeholders without treating them as a request to replace the saved plan.
+  const strictPlaceholders = ["at", "time", "days", "every_minutes", "timezone"].every(
+    (key) => key in params,
+  );
+  for (const key of [
+    "repeat",
+    "kind",
+    "at",
+    "time",
+    "timezone",
+    "timeZone",
+    "days",
+    "every_minutes",
+    "everyMinutes",
+    "everyMs",
+  ]) {
+    if (
+      normalized[key] === null ||
+      (typeof normalized[key] === "string" && !normalized[key].trim())
+    )
+      delete normalized[key];
+  }
+  const repeat = stringParam(normalized, "repeat") ?? stringParam(normalized, "kind");
+  if ((repeat && repeat !== "weekly") || (!repeat && strictPlaceholders && hasOtherPatch)) {
+    if (Array.isArray(normalized.days) && normalized.days.length === 0) delete normalized.days;
+  }
+  if ((repeat && repeat !== "interval") || (!repeat && strictPlaceholders && hasOtherPatch)) {
+    if (normalized.every_minutes === 0) delete normalized.every_minutes;
+  }
+  return normalized;
+}
+
 function parseUpdate(taskId: string, params: unknown): ScheduledTaskToolUpdate {
   if (!isRecord(params)) {
     return { taskId, patch: {} };
@@ -196,14 +234,19 @@ function parseUpdate(taskId: string, params: unknown): ScheduledTaskToolUpdate {
       : {}),
     ...(parseStatus(params.status) ? { status: parseStatus(params.status) } : {}),
   };
+  const fields = normalizeOptionalScheduleFields(
+    params,
+    Object.keys(patch).length > 0 ||
+      Boolean(stringParam(params, "workspace_id") || stringParam(params, "session_id")),
+  );
   const hasSchedule =
-    stringParam(params, "repeat") ||
-    stringParam(params, "kind") ||
-    params.time !== undefined ||
-    params.days !== undefined ||
-    params.every_minutes !== undefined ||
-    params.at !== undefined ||
-    params.timezone !== undefined;
+    stringParam(fields, "repeat") ||
+    stringParam(fields, "kind") ||
+    fields.time !== undefined ||
+    fields.days !== undefined ||
+    fields.every_minutes !== undefined ||
+    fields.at !== undefined ||
+    fields.timezone !== undefined;
   const withTarget =
     stringParam(params, "workspace_id") || stringParam(params, "session_id")
       ? { ...patch, target: parseTarget(params, stringParam(params, "workspace_id")) }
@@ -212,7 +255,7 @@ function parseUpdate(taskId: string, params: unknown): ScheduledTaskToolUpdate {
     ? {
         taskId,
         patch: withTarget,
-        resolveSchedule: (existing) => parseRepeatSchedule(mergeScheduleFields(existing, params)),
+        resolveSchedule: (existing) => parseRepeatSchedule(mergeScheduleFields(existing, fields)),
       }
     : { taskId, patch: withTarget };
 }
@@ -362,22 +405,26 @@ function createUpdateScheduledTaskTool(
     promptGuidelines: [
       "Use a task_id returned by list_scheduled_tasks or create_scheduled_task.",
       "Set status to paused, active, or completed.",
+      "Omit optional fields that are unchanged or unused for this schedule; if the API requires every key, use null. Do not invent new timing or a new target when only updating the instruction.",
     ],
     parameters: {
       type: "object",
       properties: {
         task_id: { type: "string", description: "Scheduled task id." },
-        title: { type: "string" },
-        instruction: { type: "string" },
-        status: { type: "string", description: "active, paused, or completed." },
-        repeat: { type: "string" },
-        at: { type: "string" },
-        time: { type: "string" },
-        days: { type: "array", items: { type: "string" } },
-        every_minutes: { type: "number" },
-        timezone: { type: "string" },
-        workspace_id: { type: "string" },
-        session_id: { type: "string" },
+        title: { type: ["string", "null"] },
+        instruction: { type: ["string", "null"] },
+        status: {
+          type: ["string", "null"],
+          description: "active, paused, or completed; null leaves unchanged.",
+        },
+        repeat: { type: ["string", "null"] },
+        at: { type: ["string", "null"] },
+        time: { type: ["string", "null"] },
+        days: { type: ["array", "null"], items: { type: "string" } },
+        every_minutes: { type: ["number", "null"] },
+        timezone: { type: ["string", "null"] },
+        workspace_id: { type: ["string", "null"] },
+        session_id: { type: ["string", "null"] },
       },
       required: ["task_id"],
     },

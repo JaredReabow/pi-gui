@@ -35,6 +35,7 @@ export type {
   SessionQueuedMessage,
   SessionRef,
   SessionSnapshot,
+  SessionCompactionProgress,
   SessionSchemaInfo,
   SessionRunOutcome,
   SessionTerminalRun,

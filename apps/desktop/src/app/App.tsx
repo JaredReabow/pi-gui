@@ -642,8 +642,7 @@ export default function App() {
   const transcriptAnnotations = useTranscriptAnnotations(selectedSessionKey);
   const {
     composerAttachments,
-    submitComposerDraft,
-    stopCurrentRun,
+    composerActions,
     handlePickAttachments,
     handleRemoveAttachment,
     handleEditQueuedMessage,
@@ -1296,8 +1295,7 @@ export default function App() {
                 onOpenModelSettings={(section) =>
                   openSettings(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id, section)
                 }
-                onSubmit={submitComposerDraft}
-                onStop={stopCurrentRun}
+                {...composerActions}
                 selectedSession={selectedSession}
                 lastError={snapshot.lastError}
                 selectedSlashCommand={

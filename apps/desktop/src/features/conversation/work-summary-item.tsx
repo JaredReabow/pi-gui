@@ -62,7 +62,7 @@ export function WorkSummaryItem({
     (loading
       ? "Summarizing work…"
       : result?.error
-        ? "AI summary unavailable — expand to view work"
+        ? `AI summary unavailable — ${result.error.split("\n")[0]}`
         : "Completed work — expand for details");
   return (
     <section
@@ -73,6 +73,7 @@ export function WorkSummaryItem({
         type="button"
         className="timeline-tool-group__header timeline-work-summary__header"
         aria-expanded={expanded}
+        title={result?.error}
         onClick={() => onToggle?.(item.id)}
       >
         <span
@@ -126,7 +127,16 @@ export function WorkSummaryItem({
               Summary model: {result.model.provider}/{result.model.modelId}
             </small>
           ) : null}
-          {result?.error ? <p role="status">{result.error}</p> : null}
+          {result?.request ? (
+            <small data-testid="work-summary-request-mode">
+              Summary API: {result.request.api} · Reasoning: {result.request.thinkingLevel}
+            </small>
+          ) : null}
+          {result?.error ? (
+            <p role="status" data-testid="work-summary-error">
+              {result.error}
+            </p>
+          ) : null}
           {item.items.map((entry) => (
             <div key={entry.id}>{renderItem(entry)}</div>
           ))}

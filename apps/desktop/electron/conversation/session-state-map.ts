@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ExtensionFlagValues,
   SessionConfig,
+  SessionCompactionProgress,
   SessionRunOutcome,
   SessionUsageSnapshot,
 } from "@pi-gui/session-driver";
@@ -51,6 +52,9 @@ export class SessionStateMap {
   readonly queuedComposerMessagesBySession = new Map<string, QueuedComposerMessage[]>();
   readonly queuedComposerEditsBySession = new Map<string, QueuedComposerEditState>();
   readonly sessionConfigBySession = new Map<string, SessionConfig>();
+  /** Runtime-only ordered observations, including an explicit ended/absent tombstone.
+   * Async hydration must not resurrect a finished job or hide a newer active one. */
+  readonly compactionBySession = new Map<string, SessionCompactionProgress | undefined>();
   readonly initiatingOriginBySession = new Map<string, SessionInitiatingOrigin>();
   readonly createdAtBySession = new Map<string, string>();
   readonly lastViewedAtBySession = new Map<string, string>();
@@ -102,6 +106,7 @@ export class SessionStateMap {
       this.queuedComposerMessagesBySession,
       this.queuedComposerEditsBySession,
       this.sessionConfigBySession,
+      this.compactionBySession,
       this.initiatingOriginBySession,
       this.createdAtBySession,
       this.lastViewedAtBySession,
@@ -174,6 +179,7 @@ export class SessionStateMap {
     this.queuedComposerMessagesBySession.delete(key);
     this.queuedComposerEditsBySession.delete(key);
     this.sessionConfigBySession.delete(key);
+    this.compactionBySession.delete(key);
     this.initiatingOriginBySession.delete(key);
     this.createdAtBySession.delete(key);
     this.lastViewedAtBySession.delete(key);

@@ -23,12 +23,15 @@ test("skills, prompt templates and plain text do not hold the sender window's qu
     composerSubmitNeedsSenderView("/Users/me/foo.ts why is this slow", undefined, commands),
   ).toBe(false);
   expect(composerSubmitNeedsSenderView("fix the build", undefined, commands)).toBe(false);
+  expect(composerSubmitNeedsSenderView("/compact", undefined, commands)).toBe(false);
 });
 
 test("extension and local commands keep the serialized sender view", () => {
   expect(composerSubmitNeedsSenderView("/spawn-child now", undefined, commands)).toBe(true);
   expect(composerSubmitNeedsSenderView("/name New title", undefined, commands)).toBe(true);
-  expect(composerSubmitNeedsSenderView("/compact", undefined, commands)).toBe(true);
+  expect(
+    composerSubmitNeedsSenderView("/compact", undefined, [command("compact", "extension")]),
+  ).toBe(true);
   expect(composerSubmitNeedsSenderView("/model", undefined, commands)).toBe(true);
 });
 

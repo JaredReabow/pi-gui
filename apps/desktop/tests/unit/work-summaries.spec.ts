@@ -173,6 +173,7 @@ test("fresh deadlines terminate four silent attempts; manual retry and usage are
         text: "Read source; edit remains blocked.",
         model,
         usage: { totalTokens: 42, cost: { total: 0.001 } },
+        request: { api: "openai-responses", thinkingLevel: "medium" },
       }),
     });
     expect(success.usage).toEqual({ totalTokens: 42, cost: 0.001 });
@@ -183,6 +184,7 @@ test("fresh deadlines terminate four silent attempts; manual retry and usage are
       },
     });
     expect(cached.usage).toEqual(success.usage);
+    expect(cached.request).toEqual({ api: "openai-responses", thinkingLevel: "medium" });
   } finally {
     clearTimeout(keepAlive);
   }
@@ -203,4 +205,23 @@ test("invalid persisted configuration is rejected without replacing saved bytes"
       cache: {},
     }),
   ).toThrow();
+  for (const policy of [
+    { api: "openai-responses", thinkingLevel: "bogus" },
+    { api: "x", thinkingLevel: "medium", apiKey: "MUST_NOT_PERSIST" },
+  ]) {
+    expect(() =>
+      decodeSavedSummaries({
+        version: 1,
+        enabled: true,
+        models: {},
+        cache: {
+          ["a".repeat(64)]: {
+            text: "Safe summary",
+            model: { provider: "x", modelId: "y" },
+            request: policy,
+          },
+        },
+      }),
+    ).toThrow("request policy");
+  }
 });

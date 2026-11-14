@@ -8,6 +8,7 @@ import { sessionKey } from "@pi-gui/session-driver";
 import type {
   SessionAttachment,
   SessionConfig,
+  SessionCompactionProgress,
   SessionQueuedMessage,
   SessionRef,
 } from "@pi-gui/session-driver";
@@ -126,6 +127,7 @@ export function buildWorkspaceRecords(
   lastViewedAtBySession: Map<string, string>,
   lastInteractedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
+  compactionBySession?: ReadonlyMap<string, SessionCompactionProgress | undefined>,
 ): WorkspaceRecord[] {
   const workspaceRoots = resolveWorkspaceRoots(workspaces, worktrees);
 
@@ -155,6 +157,7 @@ export function buildWorkspaceRecords(
             lastViewedAtBySession,
             lastInteractedAtBySession,
             pinnedAtBySession,
+            compactionBySession,
           ),
         ),
     };
@@ -253,6 +256,7 @@ function buildSessionRecord(
   lastViewedAtBySession: Map<string, string>,
   lastInteractedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
+  compactionBySession?: ReadonlyMap<string, SessionCompactionProgress | undefined>,
 ): SessionRecord {
   const key = sessionKey(session.sessionRef);
   const transcript = transcriptCache.get(key) ?? [];
@@ -270,7 +274,12 @@ function buildSessionRecord(
     lastInteractedAt,
     archivedAt: session.archivedAt,
     preview,
-    status: session.status,
+    status:
+      compactionBySession?.get(key)?.phase === "summarizing" ||
+      compactionBySession?.get(key)?.phase === "retrying"
+        ? "running"
+        : session.status,
+    compaction: compactionBySession?.get(key),
     runningSince: runningSinceBySession.get(key),
     hasUnseenUpdate: hasUnseenSessionUpdate(
       session.status,

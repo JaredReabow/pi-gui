@@ -489,3 +489,118 @@ test("update tool infers the schedule kind from the fields it is given", async (
   expect(result.details).toHaveProperty("error");
   expect(interval.tasks[0]?.schedule).toEqual({ kind: "interval", everyMs: 60_000 });
 });
+
+const strictEmptyFields = {
+  repeat: "",
+  at: "",
+  time: "",
+  days: [],
+  every_minutes: 0,
+  timezone: "",
+  workspace_id: "",
+  session_id: "",
+};
+
+test("strict-schema unused blank fields update a once task exactly once without changing its target", async () => {
+  const schedule = { kind: "once" as const, at: "2030-01-01T10:00:00.000Z" };
+  const original = dueIntervalTask({ schedule });
+  const host = createHost({ tasks: [original] });
+  let saves = 0;
+  host.persistScheduledTasks = async () => {
+    saves++;
+  };
+  const result = await runUpdateTool(host, {
+    ...strictEmptyFields,
+    task_id: original.id,
+    instruction: "Updated synthetic instruction",
+    status: "completed",
+    repeat: "once",
+    at: schedule.at,
+  });
+  expect(result.details).not.toHaveProperty("error");
+  expect(saves).toBe(1);
+  expect(host.tasks[0]?.instruction).toBe("Updated synthetic instruction");
+  expect(host.tasks[0]?.status).toBe("completed");
+  expect(host.tasks[0]?.schedule).toEqual(schedule);
+  expect(host.tasks[0]?.target).toEqual(original.target);
+  expect(host.deliverCalls).toEqual([]);
+});
+
+test("all strict blank placeholders do not replace weekly timing when only the instruction changes", async () => {
+  const schedule = {
+    kind: "weekly" as const,
+    days: [1, 5] as const,
+    hour: 9,
+    minute: 15,
+    timeZone: "America/New_York",
+  };
+  const host = createHost({ tasks: [dueIntervalTask({ schedule })] });
+  const result = await runUpdateTool(host, {
+    ...strictEmptyFields,
+    task_id: "task-1",
+    instruction: "Weekly synthetic update",
+  });
+  expect(result.details).not.toHaveProperty("error");
+  expect(host.tasks[0]?.schedule).toEqual(schedule);
+});
+
+test("nullable optional API fields validate and leave the saved interval and target intact", async () => {
+  const { validateToolArguments } = await import("@earendil-works/pi-ai");
+  const host = createHost({ tasks: [dueIntervalTask()] });
+  const tools = createScheduledTaskRuntimeTools(
+    {
+      createScheduledTask: async () => {
+        throw new Error("unused");
+      },
+      listScheduledTasks: async () => {
+        throw new Error("unused");
+      },
+      updateScheduledTask: async () => {
+        throw new Error("validation only");
+      },
+    },
+    () => workspaceId,
+  );
+  const tool = tools.find((t) => t.name === updateScheduledTaskToolName)!;
+  const params = {
+    task_id: "task-1",
+    title: null,
+    instruction: "Nullable synthetic update",
+    status: null,
+    repeat: null,
+    at: null,
+    time: null,
+    days: null,
+    every_minutes: null,
+    timezone: null,
+    workspace_id: null,
+    session_id: null,
+  };
+  expect(() => {
+    validateToolArguments(tool, {
+      type: "toolCall",
+      id: "strict-null",
+      name: tool.name,
+      arguments: params,
+    });
+  }).not.toThrow();
+  const result = await runUpdateTool(host, params);
+  expect(result.details).not.toHaveProperty("error");
+  expect(host.tasks[0]?.schedule).toEqual({ kind: "interval", everyMs: 60_000 });
+  expect(host.tasks[0]?.target).toEqual({ kind: "existing-thread", workspaceId, sessionId });
+});
+
+for (const invalid of [
+  { repeat: "interval", every_minutes: 0 },
+  { repeat: "weekly", days: [] },
+  { days: [] },
+  { repeat: "once", at: "2030-01-01T10:00:00.000Z", timezone: "America/Los_Angeles" },
+]) {
+  test(`meaningful invalid schedule fields are not normalized away: ${JSON.stringify(invalid)}`, async () => {
+    const original = dueIntervalTask();
+    const host = createHost({ tasks: [original] });
+    const result = await runUpdateTool(host, { task_id: "task-1", ...invalid });
+    expect(result.details).toHaveProperty("error");
+    expect(host.tasks).toEqual([original]);
+  });
+}

@@ -7,6 +7,24 @@
 import type { PluralCategory, PluralVariantKey } from "../plural";
 
 export const en = {
+  "compaction.title": "Context compaction",
+  "compaction.running": "Compacting context…",
+  "compaction.retryScheduled": "Summary retry {attempt} of {total} scheduled",
+  "compaction.retryRunning": "Compacting context — retry {attempt} of {total}…",
+  "compaction.waiting": "Waiting to retry context summary…",
+  "compaction.failed": "Context compaction failed",
+  "compaction.stopped": "Context compaction stopped",
+  "compaction.stop": "Stop compaction",
+  "compaction.retry": "Retry compaction",
+  "compaction.dismiss": "Dismiss",
+  "compaction.draftKept":
+    "Your draft and attachments are kept. You can send when compaction finishes. No percentage estimate is available.",
+  "compaction.historyKept":
+    "No new compaction was saved. Your original history, draft and attachments are kept.",
+  "compaction.elapsed": "Elapsed: {seconds}s",
+  "compaction.retryIn": "Retry in {seconds}s",
+  "compaction.request": "{model} · {api} · Reasoning: {thinking}",
+  "compaction.details": "Error details",
   "models.enabledCount": "{enabled} of {total}",
   "models.count": "{count} models",
   "models.count_one": "{count} model",

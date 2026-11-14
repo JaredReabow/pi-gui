@@ -97,7 +97,9 @@ export function resolveRuntimeSlashCommand(
 /**
  * Whether submitting this text can change the sender window's selection, so it must run
  * in that window's serialized action queue. Local composer commands and extension
- * commands can (an extension may create or select a session). Skills, prompt templates
+ * commands can (an extension may create or select a session). Context compaction
+ * uses an explicit captured target and must release the queue for Stop/draft/navigation.
+ * Skills, prompt templates
  * and plain text starting with "/" are ordinary prompts that await the whole turn, so
  * they must not hold the queue. Until the session's commands are known, any "/" text may
  * be an extension command, so it stays serialized.
@@ -118,10 +120,9 @@ export function composerSubmitNeedsSenderView(
   if (runtimeCommand) {
     return runtimeCommand.source === "extension";
   }
-  return (
-    parseComposerCommand(trimmed) !== undefined ||
-    incompleteComposerCommandMessage(trimmed) !== undefined
-  );
+  const localCommand = parseComposerCommand(trimmed);
+  if (localCommand?.type === "compact") return false;
+  return localCommand !== undefined || incompleteComposerCommandMessage(trimmed) !== undefined;
 }
 
 function normalizeRuntimeCommandName(value: string): string {

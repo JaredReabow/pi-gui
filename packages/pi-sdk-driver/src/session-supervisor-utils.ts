@@ -12,6 +12,7 @@ import type {
   ExtensionCardRow,
   SessionAttachment,
   SessionConfig,
+  SessionCompactionProgress,
   SessionErrorInfo,
   SessionRef,
   SessionSnapshot,
@@ -42,6 +43,7 @@ import {
 } from "./transcript-history.js";
 
 export interface SnapshotSource {
+  readonly compaction?: SessionCompactionProgress | undefined;
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;
   readonly title: string;
@@ -156,7 +158,11 @@ export function buildSnapshot(source: SnapshotSource): SessionSnapshot {
     ref: { ...source.ref },
     workspace: { ...source.workspace },
     title: source.title.trim() || deriveWorkspaceTitle(source.workspace),
-    status: source.status,
+    status:
+      source.compaction?.phase === "summarizing" || source.compaction?.phase === "retrying"
+        ? "running"
+        : source.status,
+    ...(source.compaction ? { compaction: source.compaction } : {}),
     updatedAt: source.updatedAt,
     ...(source.archivedAt !== undefined ? { archivedAt: source.archivedAt } : {}),
     ...(source.preview !== undefined ? { preview: source.preview } : {}),

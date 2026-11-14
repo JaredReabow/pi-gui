@@ -51,7 +51,30 @@ export interface SessionTerminalRun {
   readonly outcome: SessionRunOutcome;
 }
 
+export interface SessionCompactionProgress {
+  readonly phase: "summarizing" | "retrying" | "failed" | "stopped";
+  readonly reason: "manual" | "threshold" | "overflow";
+  readonly startedAt: Timestamp;
+  readonly updatedAt: Timestamp;
+  readonly retry?: {
+    readonly attempt: number;
+    readonly maxAttempts: number;
+    readonly retryAt?: Timestamp;
+  };
+  readonly request?: {
+    readonly provider: string;
+    readonly modelId: string;
+    readonly api: string;
+    readonly thinkingLevel: string;
+  };
+  readonly errorMessage?: string;
+  /** Runtime-only manual focus, retained for an explicit Retry without consuming a draft. */
+  readonly customInstructions?: string;
+}
+
 export interface SessionSnapshot {
+  /** Runtime-only native compaction state; never restored as an active job after restart. */
+  readonly compaction?: SessionCompactionProgress;
   readonly terminalRun?: SessionTerminalRun;
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;

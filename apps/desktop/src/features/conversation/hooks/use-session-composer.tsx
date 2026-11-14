@@ -112,8 +112,41 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     });
   };
 
+  const retryCompaction = () => {
+    if (!api || !selectedSession) return;
+    // Existing narrow command IPC, without consuming the draft, images or annotations.
+    const focus = selectedSession.compaction?.customInstructions;
+    void updateSnapshot(setSnapshot, () =>
+      api.submitComposer(focus ? `/compact ${focus}` : "/compact"),
+    ).catch((error: unknown) => {
+      setSnapshot((current) =>
+        current
+          ? { ...current, lastError: error instanceof Error ? error.message : String(error) }
+          : current,
+      );
+    });
+  };
+
   const submitComposerDraft = (options: { readonly deliverAs?: "steer" | "followUp" } = {}) => {
     if (!api || !selectedSession) {
+      return;
+    }
+
+    if (
+      selectedSession.compaction?.phase === "summarizing" ||
+      selectedSession.compaction?.phase === "retrying"
+    ) {
+      // Do not clear text, hide attachments or take annotations for an inadmissible
+      // keyboard send. The main owner and native driver independently check the race.
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              lastError:
+                "Context compaction is in progress. Your draft and attachments are kept. Wait for it to finish, or stop compaction before sending.",
+            }
+          : current,
+      );
       return;
     }
 
@@ -452,8 +485,11 @@ export function useSessionComposer(params: UseSessionComposerParams) {
 
   return {
     composerAttachments,
-    submitComposerDraft,
-    stopCurrentRun,
+    composerActions: {
+      onSubmit: submitComposerDraft,
+      onStop: stopCurrentRun,
+      onRetryCompaction: retryCompaction,
+    },
     handlePickAttachments,
     handleRemoveAttachment,
     handleEditQueuedMessage,

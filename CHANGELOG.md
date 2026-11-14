@@ -4,6 +4,16 @@
 
 ### Conversation
 
+- Work and context summaries now default to medium reasoning, resolved through SDK model
+  capabilities and provider-specific request formats without changing chat reasoning. Summary
+  errors expose actionable model/API/mode details rather than opaque request failures.
+- Added native context-compaction progress with honest stages, elapsed time, retry backoff,
+  Stop and focus-preserving Retry. Sending is blocked during compaction without discarding drafts,
+  annotations or attachments; manual compaction no longer blocks navigation or clears a
+  newer draft when it finishes or stops.
+- Scheduled-task tools accept unused blank/null optional API fields without replacing the
+  existing schedule or target, while meaningful invalid schedule values still fail validation.
+
 - Completed replies now reconcile against full model output and native persisted history,
   recovering answers when streaming updates are missing or incomplete without rerunning tools.
 - Automatic work summaries retry failed generation three times after delays of 1, 2 and

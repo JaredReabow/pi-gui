@@ -32,6 +32,7 @@ import type {
   ModelOnboardingSettingsSection,
 } from "../settings/model-onboarding";
 import { ContextMeter } from "./context-meter";
+import { CompactionProgress } from "./compaction-progress";
 import { ModelSelector } from "./model-selector";
 import { SummaryModelSelector } from "./summary-controls";
 import { AutonomyControls } from "./autonomy-controls";
@@ -85,6 +86,7 @@ interface ComposerPanelProps {
   readonly modelOnboarding: ModelOnboardingState;
   readonly onOpenModelSettings: (section: ModelOnboardingSettingsSection) => void;
   readonly onSubmit: () => void;
+  readonly onRetryCompaction?: () => void;
   readonly onStop: () => void;
   readonly showMentionMenu: boolean;
   readonly mentionOptions: readonly MentionOption[];
@@ -145,6 +147,7 @@ export function ComposerPanel({
   modelOnboarding,
   onOpenModelSettings,
   onSubmit,
+  onRetryCompaction,
   onStop,
   showMentionMenu,
   mentionOptions,
@@ -162,6 +165,9 @@ export function ComposerPanel({
   const hasComposerInput =
     composerDraft.trim().length > 0 || attachments.length > 0 || annotations.list.length > 0;
   const primaryActionIsStop = selectedSession.status === "running" && !hasComposerInput;
+  const compacting =
+    selectedSession.compaction?.phase === "summarizing" ||
+    selectedSession.compaction?.phase === "retrying";
 
   return (
     <footer className="composer" aria-busy={preparingTaskDraft}>
@@ -172,10 +178,18 @@ export function ComposerPanel({
           activeSlashCommand={activeSlashCommand}
           activeSlashCommandMeta={activeSlashCommandMeta}
           topNotice={
-            <ModelOnboardingNoticeBanner
-              notice={modelOnboarding.notice}
-              onOpenSettings={onOpenModelSettings}
-            />
+            <>
+              <ModelOnboardingNoticeBanner
+                notice={modelOnboarding.notice}
+                onOpenSettings={onOpenModelSettings}
+              />
+              <CompactionProgress
+                key={`${selectedSession.id}:${selectedSession.compaction?.startedAt ?? ""}`}
+                progress={selectedSession.compaction}
+                onRetry={onRetryCompaction}
+                onStop={onStop}
+              />
+            </>
           }
           composerDraft={composerDraft}
           setComposerDraft={setComposerDraft}
@@ -258,9 +272,9 @@ export function ComposerPanel({
                     type="button"
                     disabled={
                       !primaryActionIsStop &&
-                      (!hasComposerInput || modelOnboarding.requiresModelSelection)
+                      (compacting || !hasComposerInput || modelOnboarding.requiresModelSelection)
                     }
-                    onClick={onSubmit}
+                    onClick={primaryActionIsStop ? onStop : onSubmit}
                   >
                     {primaryActionIsStop ? <StopSquareIcon /> : <ArrowUpIcon />}
                   </button>

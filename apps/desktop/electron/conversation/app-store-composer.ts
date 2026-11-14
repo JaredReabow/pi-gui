@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { sessionKey } from "@pi-gui/session-driver";
-import type { SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
+import type {
+  SessionConfig,
+  SessionCompactionProgress,
+  SessionQueuedMessage,
+  SessionRef,
+} from "@pi-gui/session-driver";
 import type { PiSdkDriver } from "@pi-gui/pi-sdk-driver";
 import type { RuntimeCommandRecord, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type {
@@ -53,6 +58,7 @@ type ConversationDriver = Pick<
   PiSdkDriver,
   | "cancelCurrentRun"
   | "compactSession"
+  | "openSession"
   | "reloadSession"
   | "renameSession"
   | "replaceQueuedMessages"
@@ -72,10 +78,15 @@ interface ConversationOwnerHost {
   withError(error: unknown): Promise<DesktopAppState>;
   withSessionError(sessionRef: SessionRef, error: unknown): Promise<DesktopAppState>;
   withErrorHandling(fn: () => Promise<DesktopAppState>): Promise<DesktopAppState>;
-  sessionFromState(
-    sessionRef: SessionRef,
-  ):
-    | { archivedAt?: string; updatedAt: string; title: string; status: string; preview?: string }
+  sessionFromState(sessionRef: SessionRef):
+    | {
+        archivedAt?: string;
+        updatedAt: string;
+        title: string;
+        status: string;
+        preview?: string;
+        compaction?: SessionCompactionProgress;
+      }
     | undefined;
   describeSession(
     sessionRef: SessionRef,
@@ -489,6 +500,16 @@ async function submitComposerToSession(
 ): Promise<DesktopAppState> {
   const text = textInput.trim();
   const key = sessionKey(sessionRef);
+  const compaction = store.sessionFromState(sessionRef)?.compaction;
+  if (compaction?.phase === "summarizing" || compaction?.phase === "retrying") {
+    // Keyboard sends and other windows can race the disabled button. Keep the
+    // actual draft/attachments and reject before commands, queues or optimistic rows.
+    store.setComposerDraftForSession(sessionRef, textInput, "persist");
+    return store.withSessionError(
+      sessionRef,
+      "Context compaction is in progress. Your draft and attachments are kept. Wait for it to finish, or stop compaction before sending.",
+    );
+  }
   const runtime = store.runtimeForWorkspace(sessionRef.workspaceId);
   const sessionCommands =
     store.conversationState.sessionCommandsBySession.get(sessionKey(sessionRef)) ?? [];
@@ -605,14 +626,21 @@ async function submitComposerToSession(
       // The command path cleared the shown draft before sending, so hand the text back there too.
       store.setComposerDraftForSession(sessionRef, textInput, "command");
     } else if (textInput) {
-      store.conversationState.composerDraftsBySession.set(key, textInput);
+      store.setComposerDraftForSession(sessionRef, textInput, "persist");
     }
     if (attachments.length > 0) {
+      const current = store.conversationState.composerAttachmentsBySession.get(key) ?? [];
+      const restored = [
+        ...new Map(
+          [...attachments, ...current].map((attachment) => [attachment.id, attachment]),
+        ).values(),
+      ];
       store.conversationState.composerAttachmentsBySession.set(
         key,
-        cloneComposerAttachments(attachments),
+        cloneComposerAttachments(restored),
       );
-      await store.persistComposerAttachments(key, attachments);
+      await store.persistComposerAttachments(key, restored);
+      store.publishComposerAttachments(sessionRef, restored);
     }
     if (editingState) {
       store.setQueuedComposerEditState(sessionRef, editingState);
@@ -954,9 +982,34 @@ async function runComposerCommand(
   }
 
   if (parsed.type === "compact") {
-    await store.driver.compactSession(sessionRef, parsed.customInstructions);
-    await store.reloadTranscriptFromDriver(sessionRef);
-    return finishComposerCommand(store, sessionRef, key, "Compacted session context");
+    // Consume only the submitted command now, not an unrelated draft typed while
+    // the native summary is running. Late completion must never clear that draft.
+    const savedDraft = store.conversationState.composerDraftsBySession.get(key) ?? "";
+    // Mark even an uncached command as command-origin: echoing the initial
+    // selection-origin snapshot on Stop can otherwise erase a new debounced edit.
+    store.setComposerDraftForSession(
+      sessionRef,
+      savedDraft.trim() === commandText ? "" : savedDraft,
+      "command",
+    );
+    store.schedulePersistUiState();
+    store.conversationState.sessionErrorsBySession.delete(key);
+    if (store.isSelectedSession(sessionRef)) store.clearConversationError();
+    try {
+      await store.driver.compactSession(sessionRef, parsed.customInstructions);
+      const snapshot = await store.driver.openSession(sessionRef);
+      await store.reloadTranscriptFromDriver(sessionRef);
+      return finishSessionChange(
+        store,
+        sessionRef,
+        key,
+        snapshot.compaction?.phase === "stopped"
+          ? "Context compaction stopped"
+          : "Compacted session context",
+      );
+    } catch (error) {
+      return store.withSessionError(sessionRef, error);
+    }
   }
 
   if (parsed.type === "reload") {

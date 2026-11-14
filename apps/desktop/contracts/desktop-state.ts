@@ -26,6 +26,7 @@ import type {
   ExtensionFlagValues,
   HostUiRequest,
   SessionConfig,
+  SessionCompactionProgress,
   SessionUsageSnapshot,
 } from "@pi-gui/session-driver";
 import type {
@@ -141,6 +142,7 @@ export interface SessionRecord {
   readonly runningSince?: string;
   readonly hasUnseenUpdate: boolean;
   readonly config?: SessionConfig;
+  readonly compaction?: SessionCompactionProgress;
 }
 
 export type OrchestrationChildThreadStatus =

@@ -1,4 +1,11 @@
-import { useEffect, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type KeyboardEvent,
+  type SetStateAction,
+} from "react";
 import type { RuntimeCommandRecord, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type {
   DesktopAppState,
@@ -21,6 +28,23 @@ import {
 import type { PiDesktopApi } from "../../../../contracts/ipc";
 import { deriveModelOnboardingState } from "../../settings/model-onboarding";
 import type { SettingsSection } from "../../settings/settings-view";
+
+interface SlashCommandResultOwner {
+  readonly sessionKey: string;
+  readonly request: number;
+  readonly draft: string;
+}
+
+export function ownsSlashCommandResult(
+  current: SlashCommandResultOwner,
+  submitted: SlashCommandResultOwner,
+): boolean {
+  return (
+    current.sessionKey === submitted.sessionKey &&
+    current.request === submitted.request &&
+    current.draft === submitted.draft
+  );
+}
 
 interface ActiveSlashFlow {
   readonly command: ComposerSlashCommand;
@@ -137,6 +161,9 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
     onSelectLogoutProvider,
   } = params;
 
+  const currentSessionKey = useRef(selectedSessionKey);
+  currentSessionKey.current = selectedSessionKey;
+  const immediateRequest = useRef(0);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashOptionIndex, setSlashOptionIndex] = useState(0);
   const [activeSlashFlow, setActiveSlashFlow] = useState<ActiveSlashFlow | undefined>();
@@ -307,9 +334,23 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
         }
         resetSlashUi();
         setComposerDraft(command.command);
+        const submitted = {
+          sessionKey: selectedSessionKey,
+          request: ++immediateRequest.current,
+          draft: command.command,
+        };
         void updateSnapshot(setSnapshot, () => api.submitComposer(command.command))
           .then((state) => {
-            setComposerDraft(state.composerDraft);
+            // A long /compact response owns only its submitted text and thread,
+            // never a newer unsaved edit or another window/session's composer.
+            setComposerDraft((draft) =>
+              ownsSlashCommandResult(
+                { sessionKey: currentSessionKey.current, request: immediateRequest.current, draft },
+                submitted,
+              )
+                ? state.composerDraft
+                : draft,
+            );
           })
           .catch((error: unknown) => {
             console.error("[renderer] submitComposer failed", error);

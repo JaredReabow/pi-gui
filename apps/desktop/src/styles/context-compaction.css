@@ -1,0 +1,70 @@
+.compaction-progress {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent-tint-border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.compaction-progress__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.compaction-progress p {
+  margin: 0;
+}
+
+.compaction-progress__header p {
+  font-weight: 600;
+}
+
+.compaction-progress__detail,
+.compaction-progress small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.compaction-progress__bar {
+  height: 3px;
+  width: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-tint-bg), var(--accent), var(--accent-tint-bg));
+  background-size: 200% 100%;
+  animation: compaction-activity 2s ease-in-out infinite alternate;
+}
+
+.compaction-progress__error {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.compaction-progress__error summary {
+  cursor: pointer;
+}
+
+.compaction-progress__error p {
+  white-space: pre-wrap;
+  margin-top: 6px;
+}
+
+@keyframes compaction-activity {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compaction-progress__bar {
+    animation: none;
+  }
+}
