@@ -493,7 +493,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
             hidden: true,
             factory: createTranscriptIdentityExtension({
               workspace,
-              onPersisted: (sessionRef, sourceMessageId) => {
+              onPersisted: (sessionRef, sourceMessageId, text) => {
                 const record = this.records.get(sessionKey(sessionRef));
                 if (!record) return;
                 this.queueDriverEvents(
@@ -504,6 +504,7 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
                       sessionRef,
                       timestamp: nowIso(),
                       sourceMessageId,
+                      text,
                       ...(record.runningRunId ? { runId: record.runningRunId } : {}),
                     },
                   ],
@@ -3385,7 +3386,12 @@ export class SessionSupervisor implements InlineWorkerDriverCapability {
         }
         if (event.type === "message_end" && event.message.role === "assistant") {
           return toDriverEvents(
-            { type: "assistantMessageEnded", sessionRef: record.ref, timestamp },
+            {
+              type: "assistantMessageEnded",
+              sessionRef: record.ref,
+              timestamp,
+              text: messageText({ ...event.message }),
+            },
             record,
           );
         }

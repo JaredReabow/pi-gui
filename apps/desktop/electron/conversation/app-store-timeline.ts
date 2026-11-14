@@ -180,19 +180,64 @@ export function applyTimelineEvent(
 
   switch (event.type) {
     case "assistantMessageEnded": {
-      const activeId = state.activeAssistantMessageBySession.get(key);
+      let activeId = state.activeAssistantMessageBySession.get(key);
+      if (event.text) {
+        const index = transcript.findIndex((row) => row.id === activeId);
+        const current = transcript[index];
+        if (current?.kind === "message" && current.role === "assistant") {
+          transcript[index] = { ...current, text: event.text };
+        } else {
+          // Finish before tools start, so a final-only tool-bearing response
+          // cannot accidentally be placed after its tool results as a final answer.
+          const message = makeTranscriptMessage("assistant", event.text);
+          transcript.push(message);
+          activeId = message.id;
+        }
+      }
       if (activeId) state.pendingAssistantMessageBySession.set(key, activeId);
       else state.pendingAssistantMessageBySession.delete(key);
       clearActiveAssistantMessage(state.activeAssistantMessageBySession, event.sessionRef);
-      return;
+      break;
     }
     case "assistantMessagePersisted": {
       const endedId = state.pendingAssistantMessageBySession.get(key);
-      state.pendingAssistantMessageBySession.delete(key);
-      const index = transcript.findIndex((item) => item.id === endedId);
+      // A replay identifies its own native row, never a subsequent pending message.
+      let index = transcript.findIndex(
+        (item) =>
+          item.kind === "message" &&
+          item.role === "assistant" &&
+          (item.sourceMessageId === event.sourceMessageId || item.id === event.sourceMessageId),
+      );
+      if (index < 0) {
+        index = transcript.findIndex(
+          (item) =>
+            item.id === endedId &&
+            item.kind === "message" &&
+            item.role === "assistant" &&
+            !item.sourceMessageId,
+        );
+      }
       const ended = transcript[index];
-      if (ended?.kind !== "message" || ended.role !== "assistant") return;
-      transcript[index] = { ...ended, sourceMessageId: event.sourceMessageId };
+      if (ended?.kind === "message" && ended.role === "assistant") {
+        if (ended.id === endedId) state.pendingAssistantMessageBySession.delete(key);
+        transcript[index] = {
+          ...ended,
+          // Never erase interrupted output on an empty/legacy completion.
+          ...(event.text ? { text: event.text } : {}),
+          sourceMessageId: event.sourceMessageId,
+        };
+      } else {
+        state.pendingAssistantMessageBySession.delete(key);
+        if (!event.text) return;
+        transcript.push({
+          kind: "message",
+          id: event.sourceMessageId,
+          sourceMessageId: event.sourceMessageId,
+          role: "assistant",
+          text: event.text,
+          createdAt: event.timestamp,
+        });
+      }
       break;
     }
     case "sessionOpened":

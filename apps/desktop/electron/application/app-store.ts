@@ -122,6 +122,7 @@ import {
   updateSessionRecord,
 } from "../conversation/app-store-session-state";
 import { StreamingUiPublisher } from "../conversation/streaming-ui-publisher";
+import { reconcileAssistantMessages } from "../conversation/transcript-reconciliation";
 import type { RefreshStateOptions } from "./refresh-state-options";
 import {
   readPersistedUiState,
@@ -259,6 +260,8 @@ export class DesktopAppStore {
   private readonly extensionUiListeners = new Set<(update: SessionExtensionUiUpdate) => void>();
   private readonly sessionEventListeners = new Set<SessionEventListener>();
   private readonly sessionEventQueues = new Map<string, Promise<void>>();
+  private readonly observedRunIds = new Map<string, string>();
+  private readonly transcriptReadRevisions = new Map<string, number>();
   /**
    * Trailing-edge coalescers for per-session command refreshes, keyed by session
    * key. A refresh request that arrives while one is already in flight marks it
@@ -902,6 +905,7 @@ export class DesktopAppStore {
       return null;
     }
     await this.ensureTranscriptLoaded(sessionRef);
+    await this.reconcileIdleTranscript(sessionRef);
     return this.buildSelectedTranscriptRecord(sessionRef);
   }
 
@@ -914,6 +918,7 @@ export class DesktopAppStore {
       return null;
     }
     await this.ensureTranscriptLoaded(sessionRef);
+    await this.reconcileIdleTranscript(sessionRef);
     return this.buildSelectedTranscriptRecord(sessionRef);
   }
 
@@ -3121,6 +3126,7 @@ export class DesktopAppStore {
 
   async reloadTranscriptFromDriver(sessionRef: SessionRef): Promise<void> {
     const key = sessionKey(sessionRef);
+    this.transcriptReadRevisions.set(key, (this.transcriptReadRevisions.get(key) ?? 0) + 1);
     const transcript = timelineFromDriverTranscript(
       await this.driver.getTranscript(sessionRef),
       extensionToolLabels(this.runtimeByWorkspace.get(sessionRef.workspaceId)),
@@ -3129,6 +3135,39 @@ export class DesktopAppStore {
     this.sessionState.transcriptCache.set(key, transcript);
     await this.recordSelectedTranscriptFileStat(sessionRef);
     this.publishSelectedTranscriptFor(sessionRef);
+  }
+
+  /** Canonical read repairs dropped stream/completion events, never replays a prompt. */
+  private async reconcileIdleTranscript(sessionRef: SessionRef, runId?: string): Promise<void> {
+    const key = sessionKey(sessionRef);
+    if (this.sessionFromState(sessionRef)?.status === "running") return;
+    // A selected-view read must not look ahead of already-queued native events.
+    if (!runId && this.sessionEventQueues.has(key)) return;
+    const observedRun = this.observedRunIds.get(key);
+    if (runId && observedRun && runId !== observedRun) return;
+    const before = this.sessionState.transcriptCache.get(key);
+    if (!before) return;
+    const revision = this.transcriptReadRevisions.get(key);
+    const subscription = this.sessionState.sessionSubscriptions.get(key);
+    try {
+      const saved = timelineFromDriverTranscript(
+        await this.driver.getTranscript(sessionRef),
+        extensionToolLabels(this.runtimeByWorkspace.get(sessionRef.workspaceId)),
+      );
+      // Branch edits, queued prompts, fresh runs and disposal win over an old read.
+      if (
+        before !== this.sessionState.transcriptCache.get(key) ||
+        revision !== this.transcriptReadRevisions.get(key) ||
+        subscription !== this.sessionState.sessionSubscriptions.get(key) ||
+        observedRun !== this.observedRunIds.get(key) ||
+        this.sessionFromState(sessionRef)?.status === "running"
+      )
+        return;
+      this.sessionState.transcriptCache.set(key, reconcileAssistantMessages(before, saved));
+    } catch (error) {
+      // A read failure must not discard live output or prevent the settled event.
+      console.warn(`[app-store] transcript reconciliation failed for ${key}`, error);
+    }
   }
 
   /* ── CLI ↔ GUI reconcile (startup / workspace switch / window focus) ─────── */
@@ -3382,6 +3421,13 @@ export class DesktopAppStore {
    * rather than leaving the tail rejected and freezing the queue for that session.
    */
   private enqueueSessionEvent(event: SessionDriverEvent, subscriptionKey: string): void {
+    // Observe before awaiting the FIFO, so a slow settled read cannot overwrite a newer run.
+    if (
+      event.type === "sessionUpdated" &&
+      event.snapshot.status === "running" &&
+      event.snapshot.runningRunId
+    )
+      this.observedRunIds.set(sessionKey(event.sessionRef), event.snapshot.runningRunId);
     const previous = this.sessionEventQueues.get(subscriptionKey) ?? Promise.resolve();
     const next = previous
       .then(() => this.handleSessionEvent(event, subscriptionKey))
@@ -3888,6 +3934,17 @@ export class DesktopAppStore {
         }
       }
 
+      const observedRun =
+        this.sessionState.runMetricsBySession.get(key)?.runId ?? this.observedRunIds.get(key);
+      if (
+        event.runId &&
+        observedRun &&
+        event.runId !== observedRun &&
+        (event.type === "assistantDelta" ||
+          event.type === "assistantMessageEnded" ||
+          event.type === "assistantMessagePersisted")
+      )
+        return;
       switch (event.type) {
         case "assistantDelta":
           appendAssistantDelta(
@@ -3972,6 +4029,8 @@ export class DesktopAppStore {
         this.sessionState.runningSinceBySession,
         this.sessionState.lastViewedAtBySession,
       );
+      if (event.type === "runCompleted" || event.type === "runFailed")
+        await this.reconcileIdleTranscript(event.sessionRef, event.runId);
       if (event.type === "toolFinished") {
         await this.orchestrationOwner.handleOrchestrationThreadToolResult(event);
       }
@@ -5275,6 +5334,12 @@ export class DesktopAppStore {
 
   updateSessionConfig(sessionRef: SessionRef, config: SessionConfig | undefined): void {
     const key = sessionKey(sessionRef);
+    const previous = this.sessionState.sessionConfigBySession.get(key);
+    if (
+      previous &&
+      (previous.provider !== config?.provider || previous.modelId !== config?.modelId)
+    )
+      this.workSummaries.chatModelChanged(sessionRef);
     if (config && Object.keys(config).length > 0) {
       this.sessionState.sessionConfigBySession.set(key, config);
     } else {

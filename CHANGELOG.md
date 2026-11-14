@@ -4,6 +4,11 @@
 
 ### Conversation
 
+- Completed replies now reconcile against full model output and native persisted history,
+  recovering answers when streaming updates are missing or incomplete without rerunning tools.
+- Automatic work summaries retry failed generation three times after delays of 1, 2 and
+  4 seconds, with cancellation, per-attempt deadlines, shared deduplication and fair queuing.
+
 - Added an app-wide completion chime and a bell toggle beside Send/Stop. Successful turns
   chime in foreground and background threads; Stop, failures and history loading remain silent.
 - Added fourteen offline sound presets, persistent volume and explicit previews in

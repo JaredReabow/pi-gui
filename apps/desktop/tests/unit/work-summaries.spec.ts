@@ -41,7 +41,7 @@ const transcript: TimelineTranscriptItem[] = [
 const setup = async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-work-summaries-"));
   const file = join(dir, "work-summaries.json");
-  return { owner: new WorkSummaryOwner(file), file };
+  return { owner: new WorkSummaryOwner(file, 45_000, [1, 2, 4]), file };
 };
 
 test("one work group includes failures/commentary and preserves prompt/final/extensions", () => {
@@ -102,7 +102,7 @@ test("deduplicates concurrent work, persists summary, reuses semantic cache acro
   expect(calls).toBe(3);
 });
 
-test("off makes no requests; errors are visible and not retried in a render loop", async () => {
+test("off makes no requests; exhausted retries are cached instead of a render loop", async () => {
   const { owner } = await setup();
   let calls = 0;
   const generate = () => {
@@ -123,7 +123,7 @@ test("off makes no requests; errors are visible and not retried in a render loop
   await owner.update({ enabled: true });
   expect((await owner.summarize(request)).error).toContain("provider unavailable");
   await owner.summarize(request);
-  expect(calls).toBe(1);
+  expect(calls).toBe(4);
 });
 
 test("settings changes cancel stale work even if provider ignores its signal", async () => {
@@ -148,14 +148,24 @@ test("settings changes cancel stale work even if provider ignores its signal", a
   expect((await promise).error).toContain("cancelled");
 });
 
-test("summary deadline terminates silent providers; retry is explicit and usage is retained", async () => {
+test("fresh deadlines terminate four silent attempts; manual retry and usage are retained", async () => {
   const { file } = await setup();
-  const owner = new WorkSummaryOwner(file, 15);
+  const owner = new WorkSummaryOwner(file, 15, [1, 2, 4]);
   const request = { target, promptId: "user", transcript, running: false, chatModel: model };
   const keepAlive = setTimeout(() => {}, 1000);
   try {
-    const failure = await owner.summarize({ ...request, generate: () => new Promise(() => {}) });
+    const signals: AbortSignal[] = [];
+    const failure = await owner.summarize({
+      ...request,
+      generate: (_prompt, _model, signal) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    });
     expect(failure.error).toContain("timed out");
+    expect(signals).toHaveLength(4);
+    expect(new Set(signals).size).toBe(4);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
     const success = await owner.summarize({
       ...request,
       retry: true,

@@ -8,6 +8,11 @@ import type {
   WorkSummaryResult,
 } from "../../contracts/work-summaries";
 import { completedWork } from "../../contracts/work-summaries";
+import {
+  SummaryRequestScheduler,
+  summaryDelay,
+  withSummaryAbort,
+} from "./summary-request-scheduler";
 import type { TimelineTranscriptItem } from "../../contracts/timeline-types";
 
 interface SavedSummaries {
@@ -98,12 +103,15 @@ export class WorkSummaryOwner {
   private writes: Promise<void> = Promise.resolve();
   private readonly pending = new Map<string, Promise<WorkSummaryResult>>();
   private readonly failures = new Map<string, WorkSummaryResult>();
-  private readonly controllers = new Set<AbortController>();
+  private readonly controllers = new Map<AbortController, string>();
+  private readonly scheduler = new SummaryRequestScheduler();
+  private closed = false;
   private revision = 0;
 
   constructor(
     private readonly file: string,
     private readonly timeoutMs = 45_000,
+    private readonly retryDelaysMs: readonly [number, number, number] = [1_000, 2_000, 4_000],
   ) {
     this.ready = readJsonWithBackup(file).then((stored) => {
       if (stored.corrupted && !stored.recovered)
@@ -135,7 +143,7 @@ export class WorkSummaryOwner {
         else delete next.models[key];
       }
       this.revision++;
-      for (const controller of this.controllers) controller.abort();
+      for (const controller of this.controllers.keys()) controller.abort();
       this.failures.clear();
       await this.persist(next);
       this.saved = next;
@@ -144,8 +152,15 @@ export class WorkSummaryOwner {
     await operation;
     return this.preferences(input.target);
   }
+  chatModelChanged(target: SummaryTarget): void {
+    const key = keyOf(target);
+    if (this.saved.models[key]) return;
+    for (const [controller, owner] of this.controllers) if (owner === key) controller.abort();
+  }
   async close(): Promise<void> {
-    for (const controller of this.controllers) controller.abort();
+    this.closed = true;
+    for (const controller of this.controllers.keys()) controller.abort();
+    await Promise.allSettled(this.pending.values());
     await this.writes;
   }
   private persist(value = this.saved): Promise<void> {
@@ -169,6 +184,7 @@ export class WorkSummaryOwner {
     }>;
   }): Promise<WorkSummaryResult> {
     const prefs = await this.preferences(options.target);
+    if (this.closed) return { error: "Summary service closed" };
     if (!prefs.enabled) return { error: "AI work summaries are off" };
     const work = completedWork(options.transcript, options.running).find(
       (span) => span.promptId === options.promptId,
@@ -198,13 +214,13 @@ export class WorkSummaryOwner {
     if (cached) return cached;
     const existing = this.pending.get(key);
     if (existing) return existing;
-    // Bound auxiliary work globally; lazy UI requests cannot saturate providers.
-    if (this.pending.size >= 2)
-      return { error: "Summary service busy; reopen this thread to retry" };
+    // Bound queued work as well as inference. Ordinary contention queues fairly.
+    if (this.pending.size >= 300)
+      return { error: "Summary queue full; retry after pending summaries finish" };
     const revision = this.revision;
     const controller = new AbortController();
-    this.controllers.add(controller);
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(this.timeoutMs)]);
+    this.controllers.set(controller, keyOf(options.target));
+    const signal = controller.signal;
     const truncated = source.length > 24000;
     const prompt = truncated
       ? `${source.slice(0, 12000)}\n[Middle of work omitted to fit the summary budget]\n${source.slice(-12000)}`
@@ -212,18 +228,42 @@ export class WorkSummaryOwner {
     // Defer execution until after pending.set, including synchronous provider failures.
     const request = Promise.resolve().then(async (): Promise<WorkSummaryResult> => {
       try {
-        const result = await Promise.race([
-          options.generate(prompt, model, signal),
-          new Promise<never>((_resolve, reject) => {
-            if (signal.aborted) reject(new Error("Summary cancelled"));
-            else
-              signal.addEventListener(
-                "abort",
-                () => reject(new Error("Summary cancelled or timed out")),
-                { once: true },
+        let result: Awaited<ReturnType<typeof options.generate>> | undefined;
+        // Four attempts total, with fresh deadlines; backoff holds no inference slot.
+        for (let attempt = 0; attempt <= this.retryDelaysMs.length; attempt++) {
+          signal.throwIfAborted();
+          try {
+            result = await this.scheduler.run(signal, async () => {
+              const deadline = new AbortController();
+              const attemptSignal = AbortSignal.any([signal, deadline.signal]);
+              const timer = setTimeout(
+                () => deadline.abort(new Error("Summary timed out")),
+                this.timeoutMs,
               );
-          }),
-        ]);
+              try {
+                const generated = await withSummaryAbort(
+                  Promise.resolve().then(() => {
+                    attemptSignal.throwIfAborted();
+                    return options.generate(prompt, model, attemptSignal);
+                  }),
+                  attemptSignal,
+                );
+                attemptSignal.throwIfAborted();
+                if (!generated.text.trim()) throw new Error("Summary model returned no text");
+                return generated;
+              } finally {
+                clearTimeout(timer);
+                deadline.abort();
+              }
+            });
+            break;
+          } catch (error) {
+            if (signal.aborted) throw new Error("Summary cancelled");
+            if (attempt === this.retryDelaysMs.length) throw error;
+            await summaryDelay(this.retryDelaysMs[attempt]!, signal);
+          }
+        }
+        if (!result) throw new Error("Summary request failed");
         signal.throwIfAborted();
         if (revision !== this.revision) return { error: "Summary settings changed" };
         const summary: WorkSummaryResult = {
@@ -235,19 +275,23 @@ export class WorkSummaryOwner {
             : {}),
         };
         const write = this.writes.then(async () => {
-          if (revision !== this.revision) return;
-          this.saved.cache[key] = summary;
-          const keys = Object.keys(this.saved.cache);
+          signal.throwIfAborted();
+          if (revision !== this.revision || this.closed)
+            throw new Error("Summary settings changed");
+          const next = structuredClone(this.saved);
+          next.cache[key] = summary;
+          const keys = Object.keys(next.cache);
           for (const stale of keys.slice(0, Math.max(0, keys.length - 300)))
-            delete this.saved.cache[stale];
-          await this.persist();
+            delete next.cache[stale];
+          await this.persist(next);
+          this.saved = next;
         });
         this.writes = write.catch(() => undefined);
         await write;
         return summary;
       } catch (error) {
         const failed = { error: String(error).slice(0, 300) };
-        if (revision === this.revision) {
+        if (revision === this.revision && !signal.aborted && !this.closed) {
           this.failures.set(key, failed);
           if (this.failures.size > 300) this.failures.delete(this.failures.keys().next().value!);
         }

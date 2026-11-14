@@ -26,7 +26,12 @@ function gate() {
   return { promise, release };
 }
 
-function response(model: Parameters<StreamFunction>[0], text: string, error?: string) {
+function response(
+  model: Parameters<StreamFunction>[0],
+  text: string,
+  error?: string,
+  delta = text,
+) {
   const stream = createAssistantMessageEventStream();
   const message: AssistantMessage = {
     role: "assistant",
@@ -47,7 +52,13 @@ function response(model: Parameters<StreamFunction>[0], text: string, error?: st
     timestamp: Date.now(),
   };
   stream.push({ type: "start", partial: { ...message, content: [] } });
-  if (text) stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: message });
+  if (delta)
+    stream.push({
+      type: "text_delta",
+      contentIndex: 0,
+      delta,
+      partial: { ...message, content: [{ type: "text", text: delta }] },
+    });
   if (error) stream.push({ type: "error", reason: "error", error: message });
   else stream.push({ type: "done", reason: "stop", message });
   return stream;
@@ -738,6 +749,28 @@ await test("abort rejection leaves the actual completed outcome and no-op Stop c
   await sending;
   await h.until(() => h.events.some((event) => event.type === "runCompleted"));
   assert.equal((await h.driver.openSession(h.ref)).terminalRun?.outcome, "completed");
+});
+
+await test("final-only provider publishes complete native text even without any text_delta", async (t) => {
+  const h = await fixture(t, (model) => response(model, "NO_DELTA_FINAL", undefined, ""));
+  await h.driver.sendUserMessage(h.ref, { text: "Answer without deltas" });
+  await h.until(() => h.completions().length === 1);
+  assert.equal(h.events.filter((event) => event.type === "assistantDelta").length, 0);
+  const events = await assertPersistedAssistantIdentity(h);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.text, "NO_DELTA_FINAL");
+});
+
+await test("native persistence publishes corrected full text rather than an incomplete delta", async (t) => {
+  const h = await fixture(t, (model) =>
+    response(model, "CORRECT_COMPLETE_FINAL", undefined, "obsolete partial"),
+  );
+  await h.driver.sendUserMessage(h.ref, { text: "Answer with corrected final" });
+  await h.until(() => h.completions().length === 1);
+  const events = await assertPersistedAssistantIdentity(h);
+  assert.equal(events[0]?.text, "CORRECT_COMPLETE_FINAL");
+  const delta = h.events.find((event) => event.type === "assistantDelta");
+  assert.equal(delta?.text, "obsolete partial");
 });
 
 await test("failed terminal storage is durable-unconfirmed and never fabricates a restart record", async (t) => {

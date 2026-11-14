@@ -220,12 +220,16 @@ export interface AssistantDeltaEvent extends SessionEventBase {
 /** Finalizes one assistant message while the containing run may continue. */
 export interface AssistantMessageEndedEvent extends SessionEventBase {
   readonly type: "assistantMessageEnded";
+  /** Complete model output; streaming deltas may be missing or incomplete. */
+  readonly text?: string;
 }
 
 /** Identifies the immediately preceding ended assistant message after Pi persists it. */
 export interface AssistantMessagePersistedEvent extends SessionEventBase {
   readonly type: "assistantMessagePersisted";
   readonly sourceMessageId: string;
+  /** Complete persisted text, authoritative over provisional streaming deltas. */
+  readonly text?: string;
 }
 
 /**
