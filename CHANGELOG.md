@@ -4,6 +4,10 @@
 
 ### Conversation
 
+- Fixed premature compaction timeouts on long split turns: both native summary stages and
+  retry waits share a bounded ten-minute operation budget instead of being cut off after two
+  minutes, preserving completed work in the first stage long enough to finish the checkpoint.
+
 - Work and context summaries now default to medium reasoning, resolved through SDK model
   capabilities and provider-specific request formats without changing chat reasoning. Summary
   errors expose actionable model/API/mode details rather than opaque request failures.

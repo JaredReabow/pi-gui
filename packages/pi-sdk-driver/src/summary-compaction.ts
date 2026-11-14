@@ -25,6 +25,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+// Native split-turn compaction generates history and turn-prefix summaries in
+// sequence. Budget the entire operation (including SDK retries), not a short
+// single-request deadline that can discard a completed first stage.
+const COMPACTION_TIMEOUT_MS = 10 * 60 * 1000;
+
 /** One released hook covers /compact, threshold and overflow recovery. */
 export function createSummaryCompactionExtension(
   workspaceId: string,
@@ -54,7 +59,7 @@ export function createSummaryCompactionExtension(
           throw new Error(`Summary model unavailable: ${requested.provider}/${requested.modelId}`);
         level = summaryThinkingLevel(model);
         options.onRequest?.(model, level);
-        signal = AbortSignal.any([event.signal, AbortSignal.timeout(120_000)]);
+        signal = AbortSignal.any([event.signal, AbortSignal.timeout(COMPACTION_TIMEOUT_MS)]);
         signal.throwIfAborted();
         const auth = await runtime.getApiKeyAndHeaders(model);
         if (!auth.ok) throw new Error(auth.error);
@@ -114,7 +119,12 @@ export function createSummaryCompactionExtension(
       } catch (error) {
         // Never silently switch to the chat model or rewrite history on a failed selection.
         if (event.signal.aborted) return { cancel: true };
-        const cause: unknown = signal?.aborted ? signal.reason : error;
+        const cause: unknown = signal?.aborted
+          ? new DOMException(
+              "Context compaction timed out after its 10-minute total budget, including all summary stages and retry waits.",
+              "TimeoutError",
+            )
+          : error;
         const message = model
           ? explainModelRequestFailure(cause, model, level).message
           : safeRequestError(cause);

@@ -13,7 +13,7 @@ import { createAgentSessionRuntimeWithNpmFallback } from "../dist/npm-package-fa
 type SummaryMode = "success" | "gated" | "transient" | "bad-request";
 async function fixture(
   t: TestContext,
-  { automatic = false, delayMs = 5, selectedSummary = "summary" } = {},
+  { automatic = false, delayMs = 5, selectedSummary = "summary", keepRecentTokens = 0 } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "pi-compaction-progress-"));
   const agentDir = join(root, "agent"),
@@ -36,7 +36,7 @@ async function fixture(
     JSON.stringify({
       packages: [],
       cacheWarming: "off",
-      compaction: { enabled: automatic, reserveTokens: 1000, keepRecentTokens: 0 },
+      compaction: { enabled: automatic, reserveTokens: 1000, keepRecentTokens },
       retry: { enabled: true, maxRetries: 3, baseDelayMs: delayMs },
     }),
   );
@@ -48,6 +48,7 @@ async function fixture(
     overflow = false;
   let mode: SummaryMode = "success";
   let release: (() => void) | undefined;
+  let onSummary: (() => void) | undefined;
   const changed = new Set<() => void>();
   const notify = () => {
     for (const fn of changed) fn();
@@ -72,6 +73,7 @@ async function fixture(
         if (summary) {
           summaryCalls++;
           assert.equal(options?.reasoning, "medium");
+          onSummary?.();
         } else chatCalls++;
         const error =
           summary && mode === "bad-request"
@@ -127,7 +129,7 @@ async function fixture(
           release = () => done();
           if (options?.signal?.aborted) done(true);
           else options?.signal?.addEventListener("abort", () => done(true), { once: true });
-        } else done();
+        } else done(options?.signal?.aborted === true);
         notify();
         return stream;
       },
@@ -201,6 +203,9 @@ async function fixture(
     },
     release() {
       release?.();
+    },
+    onSummary(callback: () => void) {
+      onSummary = callback;
     },
     summaryCalls: () => summaryCalls,
     chatCalls: () => chatCalls,
@@ -402,6 +407,69 @@ await test(
     );
   },
 );
+
+for (const exhaustBudget of [false, true]) {
+  await test(
+    `split-turn compaction ${exhaustBudget ? "still stops at its whole-operation deadline without a partial checkpoint" : "allows both native summaries to exceed two minutes combined"}`,
+    { timeout: 10000 },
+    async (t) => {
+      const h = await fixture(t, { keepRecentTokens: 32 });
+      const manager = h.runtime.session.sessionManager;
+      const prior = manager
+        .getEntries()
+        .find((e) => e.type === "message" && e.message.role === "assistant");
+      assert.ok(prior?.type === "message" && prior.message.role === "assistant");
+      manager.appendMessage({ role: "user", content: "SPLIT_TURN_FIXTURE", timestamp: Date.now() });
+      for (const text of ["EARLIER_IN_TURN ".repeat(300), "KEPT_TURN_TAIL ".repeat(300)])
+        manager.appendMessage({ ...prior.message, content: [{ type: "text", text }] });
+      const before = manager.getEntries().map((entry) => entry.id);
+      // Virtualize only the hook's deadline, not SDK execution or its compaction
+      // preparation. No 165-second wall-clock sleep or provider request is involved.
+      let elapsed = 0;
+      let deadline = Infinity;
+      const controller = new AbortController();
+      const timeouts = t.mock.method(AbortSignal, "timeout", (ms: number) => {
+        deadline = elapsed + ms;
+        return controller.signal;
+      });
+      h.onSummary(() => {
+        elapsed += h.summaryCalls() === 1 ? 105000 : exhaustBudget ? 505000 : 60000;
+        if (elapsed >= deadline)
+          controller.abort(
+            new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+          );
+      });
+      if (exhaustBudget) await assert.rejects(h.driver.compactSession(h.ref), /timed out/);
+      else await h.driver.compactSession(h.ref);
+      assert.equal(
+        timeouts.mock.callCount(),
+        1,
+        "one bounded budget covers both calls and retries",
+      );
+      assert.equal(deadline, 600000);
+      assert.equal(
+        h.summaryCalls(),
+        2,
+        "native split preparation makes two real SDK summary calls",
+      );
+      const checkpoints = manager.getEntries().filter((entry) => entry.type === "compaction");
+      assert.equal(checkpoints.length, exhaustBudget ? 0 : 1);
+      if (!exhaustBudget) assert.ok(checkpoints[0]?.summary.includes("Turn Context (split turn)"));
+      assert.deepEqual(
+        manager
+          .getEntries()
+          .slice(0, before.length)
+          .map((entry) => entry.id),
+        before,
+      );
+      assert.equal(h.runtime.session.isCompacting, false);
+      assert.equal(h.runtime.session.model?.id, "chat");
+      assert.equal(h.runtime.session.thinkingLevel, "high");
+      assert.equal(h.chatCalls(), 1, "no chat or tool replay");
+      assert.equal((await h.snapshot()).compaction?.phase, exhaustBudget ? "failed" : undefined);
+    },
+  );
+}
 
 for (const stop of [false, true]) {
   await test(

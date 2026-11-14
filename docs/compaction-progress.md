@@ -10,6 +10,8 @@ The composer remains editable, but sending is held until compaction ends. Text, 
 
 **Stop compaction** uses Pi's native abort and wait-for-idle path, including cancellation during retry backoff. Manual compaction is stoppable even when no assistant reply is streaming. It does not report a completed assistant turn or play a completion chime. Navigation to another thread remains usable; progress belongs only to the thread performing compaction.
 
+A split-turn compaction can generate two summaries in sequence: history, then the earlier part of the current turn. The entire operation, including native retry waits, has a **10-minute total budget**; it is not cut off after two minutes while the model is still producing the second summary. This is a safety limit, not an expected duration. Stop remains available throughout, and a timeout saves no partial checkpoint.
+
 ## Failure and recovery
 
 If compaction fails, the original history and unsent input remain intact. Error details distinguish provider/configuration failures from cancellation and show the model/API/reasoning setting without exposing authentication values. No partial or failed checkpoint is saved.

@@ -102,7 +102,8 @@ export function explainModelRequestFailure(
     explanation = `The provider service failed (HTTP ${status}). This is not a draft or local-history failure.`;
   } else if (/timed?\s*out|timeout/i.test(detail)) {
     code = "MODEL_REQUEST_TIMEOUT";
-    explanation = "The model request timed out. Retry when the provider is responding.";
+    explanation =
+      "The model request timed out. No complete summary was saved. Retry or choose a faster summary model.";
   } else if (/abort|cancel/i.test(detail)) {
     code = "MODEL_REQUEST_CANCELLED";
     explanation = "The model request was cancelled; no summary was saved.";
