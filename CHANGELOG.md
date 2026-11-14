@@ -4,6 +4,11 @@
 
 ### Conversation
 
+- Added an app-wide completion chime and a bell toggle beside Send/Stop. Successful turns
+  chime in foreground and background threads; Stop, failures and history loading remain silent.
+- Added fourteen offline sound presets, persistent volume and explicit previews in
+  Settings → Notifications. The default is a typewriter return bell at 60% volume.
+
 - Sessions now read the same shared Pi model catalog as the picker, fixing
   `Unknown model` errors for newly published Codex Router routes such as
   `openrouter/openrouter/free`. Each session keeps its own extension runtime and
@@ -63,6 +68,9 @@
   and persistent project colour selection from the project menu.
 
 ### Configuration and integrations
+
+- Windows notification controls now use platform-appropriate wording and open Windows
+  notification settings rather than Apple support documentation.
 
 - pi-gui now reads `~/.pi/agent/models.json` as Codex Router's shared, read-only model
   catalog while retaining its isolated auth, settings, sessions, and custom endpoint store.

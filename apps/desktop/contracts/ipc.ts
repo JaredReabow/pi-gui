@@ -1,3 +1,4 @@
+import type { CompletionChimePlayback } from "./completion-chime";
 import type { AutonomyUpdate } from "./autonomy";
 import type { AgentAutonomyPreferences } from "@pi-gui/session-driver";
 import type {
@@ -237,6 +238,7 @@ export const desktopIpc = {
   setCodemodeAlwaysOn: "pi-gui:set-codemode-always-on",
   respondToHostUiRequest: "pi-gui:respond-to-host-ui-request",
   setNotificationPreferences: "pi-gui:set-notification-preferences",
+  completionChime: "pi-gui:completion-chime",
   setIntegratedTerminalShell: "pi-gui:set-integrated-terminal-shell",
   setEnableTransparency: "pi-gui:set-enable-transparency",
   terminalEnsurePanel: "pi-gui:terminal-ensure-panel",
@@ -1222,6 +1224,7 @@ export interface PiDesktopApi {
   getTaskWorkbenchTemplate(target: SessionRef): Promise<TaskWorkbenchTemplate | null>;
   saveTaskWorkbenchTemplate(input: SaveTaskWorkbenchTemplateInput): Promise<void>;
   onStateChanged(listener: PiDesktopStateListener): () => void;
+  onCompletionChime(listener: (playback: CompletionChimePlayback) => void): () => void;
   getSelectedTranscript(): Promise<SelectedTranscriptRecord | null>;
   onSelectedTranscriptChanged(listener: PiDesktopSelectedTranscriptListener): () => void;
   resendSelectedTranscript(): void;

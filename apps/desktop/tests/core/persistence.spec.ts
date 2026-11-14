@@ -487,6 +487,9 @@ test("preserves durable ui state when one startup workspace is unavailable", asy
       backgroundCompletion: false,
       backgroundFailure: true,
       attentionNeeded: false,
+      chimeEnabled: true,
+      chimeSound: "typewriter-return",
+      chimeVolume: 60,
     });
     expect(state.integratedTerminalShell).toBe("/bin/zsh");
     expect(state.themePresetId).toBe("github");
@@ -513,8 +516,17 @@ test("preserves durable ui state when one startup workspace is unavailable", asy
       "workspaceOrder",
       "themePresetId",
       "sidebarCollapsed",
-    ]) {
-      expect(afterFailure[key], `persisted key ${key}`).toEqual(beforeFailure[key]);
+    ] as const) {
+      const expected =
+        key === "notificationPreferences"
+          ? {
+              ...beforeFailure.notificationPreferences,
+              chimeEnabled: true,
+              chimeSound: "typewriter-return",
+              chimeVolume: 60,
+            }
+          : beforeFailure[key];
+      expect(afterFailure[key], `persisted key ${key}`).toEqual(expected);
     }
 
     const healthySelection = await window.evaluate(async (workspaceId) => {

@@ -1,3 +1,4 @@
+import type { CompletionChimePlayback } from "../contracts/completion-chime";
 import type { EffectiveChildModelSettings } from "../contracts/child-selection";
 import type {
   ActivityIndicatorStyle,
@@ -232,6 +233,8 @@ contextBridge.exposeInMainWorld("piApp", {
       desktopIpc.changeReviewFileStage,
       input,
     ) as Promise<ChangeReviewFileStageResult>,
+  onCompletionChime: (listener: (playback: CompletionChimePlayback) => void) =>
+    subscribeIpc(desktopIpc.completionChime, listener),
   onStateChanged: (listener: PiDesktopStateListener) => {
     const handle = (_event: Electron.IpcRendererEvent, state: PiDesktopStatePush) => {
       listener(state);

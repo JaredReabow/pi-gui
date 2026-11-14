@@ -44,7 +44,11 @@ async function startSelectionServer(): Promise<{
       };
       const promptContent = [...(payload.messages ?? [])]
         .reverse()
-        .find((message) => message.role === "user")?.content;
+        .find(
+          (message) =>
+            message.role === "user" &&
+            /ALPHA_SELECTED|HOLD_FOR_CANCELLATION/.test(contentText(message.content)),
+        )?.content;
       const promptText = contentText(promptContent);
       const shouldHold = (payload.messages ?? []).some((message) =>
         contentText(message.content).includes("HOLD_FOR_CANCELLATION"),

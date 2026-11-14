@@ -13,7 +13,7 @@
 .timeline-work-summary__generate {
   display: block;
   margin: 0 14px 10px 40px;
-  color: var(--text-secondary);
+  color: var(--muted);
   font-size: 12px;
 }
 .timeline-work-summary__generate {

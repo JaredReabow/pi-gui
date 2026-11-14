@@ -1,3 +1,7 @@
+import {
+  defaultCompletionChimePreferences,
+  type CompletionChimePreferences,
+} from "./completion-chime";
 import type {
   SessionInitiatingOrigin,
   ChildOriginMetadata,
@@ -84,7 +88,7 @@ export type ComposerDraftSyncSource =
   | "extension-editor-text"
   | "queued-message-edit";
 
-export interface NotificationPreferences {
+export interface NotificationPreferences extends CompletionChimePreferences {
   readonly backgroundCompletion: boolean;
   readonly backgroundFailure: boolean;
   readonly attentionNeeded: boolean;
@@ -598,6 +602,7 @@ export function createEmptyDesktopAppState(): DesktopAppState {
     childThreadLinks: [],
     scheduledTasks: [],
     notificationPreferences: {
+      ...defaultCompletionChimePreferences,
       backgroundCompletion: true,
       backgroundFailure: true,
       attentionNeeded: true,

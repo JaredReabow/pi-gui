@@ -1,0 +1,50 @@
+.chime-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.composer__chime {
+  width: 30px;
+  height: 30px;
+}
+.composer__chime[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-tint-bg);
+}
+.chime-toggle__error {
+  position: absolute;
+  bottom: 36px;
+  right: 0;
+  width: 180px;
+  font-size: 11px;
+  padding: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--accent-tint-border);
+  border-radius: 6px;
+}
+.chime-settings__sound {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+}
+.chime-settings__sound .settings-select-control {
+  max-width: 100%;
+}
+.chime-settings__volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chime-settings__volume input {
+  width: 140px;
+  accent-color: var(--accent);
+}
+.chime-settings__volume output {
+  min-width: 4ch;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

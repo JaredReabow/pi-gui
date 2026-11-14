@@ -96,7 +96,13 @@ test("access modes, one-time approval, reviewer isolation and restart on Electro
         .click();
       await expect(reviewer()).toContainText("reviewer");
     };
+    const dialog = window.getByTestId("extension-dialog");
+    const automaticSandbox = process.platform === "darwin";
     await start("write-project");
+    if (!automaticSandbox) {
+      await expect(dialog).toContainText("Approve write once?");
+      await dialog.getByTestId("extension-dialog-confirm").click();
+    }
     await expect(done()).toHaveCount(1);
     // The v1 Read only default retains its old permission under Project only.
     await expect(mode()).toHaveValue("project-only");
@@ -108,7 +114,6 @@ test("access modes, one-time approval, reviewer isolation and restart on Electro
     ]);
     expect(await readFile(join(workspace, "allowed.txt"), "utf8")).toBe("project-change");
     await renameCurrent("First autonomy thread");
-    const dialog = window.getByTestId("extension-dialog");
     await mode().selectOption("read-only");
     await send("write-read-only");
     await expect(dialog).toContainText("Approve write once?");
@@ -136,9 +141,14 @@ test("access modes, one-time approval, reviewer isolation and restart on Electro
     await mode().selectOption("auto");
     await chooseReviewer();
     await send("command-auto");
+    if (!automaticSandbox) {
+      await expect(dialog).toContainText("No supported automatic sandbox on this platform");
+      await dialog.getByTestId("extension-dialog-confirm").click();
+    }
     await expect(done()).toHaveCount(5);
     expect(await readFile(join(workspace, "command-auto.txt"), "utf8")).toBe("modified");
-    expect((await readFile(log, "utf8")).trim()).toBe("reviewer");
+    if (automaticSandbox) expect((await readFile(log, "utf8")).trim()).toBe("reviewer");
+    else await expect(access(log)).rejects.toThrow();
     await expect(dialog).toHaveCount(0);
     await window.screenshot({ path: testInfo.outputPath("auto-review-model.png") });
     await mode().selectOption("full-access");
@@ -153,13 +163,18 @@ test("access modes, one-time approval, reviewer isolation and restart on Electro
     await send("external");
     await expect(done()).toHaveCount(6);
     expect(await readFile(outside, "utf8")).toBe("modified");
-    expect((await readFile(log, "utf8")).trim()).toBe("reviewer");
+    if (automaticSandbox) expect((await readFile(log, "utf8")).trim()).toBe("reviewer");
+    else await expect(access(log)).rejects.toThrow();
     await mode().selectOption("auto");
     await reviewer().click();
     await window.getByRole("button", { name: "Same as chat", exact: true }).click();
     await expect(reviewer()).toContainText("Same as chat");
     await chooseReviewer();
     await start("write-second");
+    if (!automaticSandbox) {
+      await expect(dialog).toContainText("Approve write once?");
+      await dialog.getByTestId("extension-dialog-confirm").click();
+    }
     await expect(done()).toHaveCount(1);
     await expect(mode()).toHaveValue("project-only");
     await renameCurrent("Second autonomy thread");

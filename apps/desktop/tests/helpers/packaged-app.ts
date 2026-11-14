@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, readdir, realpath, rename } from "node:fs/promises";
+import { cp, mkdtemp, readdir, realpath, rename, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -34,7 +34,34 @@ export async function resolvePackagedAppBundle(releaseDir = packagedReleaseDir):
 
 export async function resolvePackagedAppExecutable(
   releaseDir = packagedReleaseDir,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
+  if (platform === "win32") {
+    // Only runnable unpacked applications, never a similarly named installer.
+    for (const directory of [
+      releaseDir,
+      join(releaseDir, "win-unpacked"),
+      join(releaseDir, "win-arm64-unpacked"),
+    ]) {
+      try {
+        if (!(await stat(join(directory, "resources", "app.asar"))).isFile()) continue;
+      } catch (error) {
+        if (isMissingPathError(error)) continue;
+        throw error;
+      }
+      for (const name of ["pi-gui-candidate.exe", "pi-gui.exe", "pi-gui Candidate.exe"]) {
+        const executable = join(directory, name);
+        try {
+          if ((await stat(executable)).isFile()) return executable;
+        } catch (error) {
+          if (!isMissingPathError(error)) throw error;
+        }
+      }
+    }
+    throw new Error(
+      `No unpacked Windows app found under ${releaseDir}. Build package:win:dir first.`,
+    );
+  }
   return resolveAppBundleExecutable(await resolvePackagedAppBundle(releaseDir));
 }
 

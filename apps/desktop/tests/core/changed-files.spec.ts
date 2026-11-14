@@ -20,8 +20,14 @@ test("preserves an exact changed-file path through diff and stage actions", asyn
   test.setTimeout(30_000);
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("changed-file-path");
-  const filePath = ' leading\t"quoted" -> destination\n.txt ';
-  const displayCollisionPath = JSON.stringify(filePath);
+  // NTFS rejects quotes/newlines and trims trailing spaces; retain a legal but
+  // display-confusable pair on Windows rather than failing before the app starts.
+  const filePath =
+    process.platform === "win32"
+      ? " leading [quoted] destination-π.txt"
+      : ' leading\t"quoted" -> destination\n.txt ';
+  const displayCollisionPath =
+    process.platform === "win32" ? filePath.trimStart() : JSON.stringify(filePath);
   await initGitRepo(workspacePath);
   await commitAllInGitRepo(workspacePath, "init");
   await writeFile(join(workspacePath, filePath), "exact path contents\n", "utf8");

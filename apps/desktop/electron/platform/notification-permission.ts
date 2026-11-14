@@ -259,6 +259,12 @@ async function requestPackagedMacOsNotificationPermission(): Promise<
   }
 }
 
+export function notificationSettingsTarget(platform: NodeJS.Platform): string {
+  return platform === "win32"
+    ? "ms-settings:notifications"
+    : "https://support.apple.com/guide/mac-help/change-notifications-settings-mh40583/mac";
+}
+
 async function openSystemNotificationSettingsInternal(): Promise<void> {
   const testLogPath = process.env[TEST_SETTINGS_LOG_PATH_ENV]?.trim();
   if (testLogPath) {
@@ -267,9 +273,7 @@ async function openSystemNotificationSettingsInternal(): Promise<void> {
   }
 
   if (process.platform !== "darwin") {
-    await shell.openExternal(
-      "https://support.apple.com/guide/mac-help/change-notifications-settings-mh40583/mac",
-    );
+    await shell.openExternal(notificationSettingsTarget(process.platform));
     return;
   }
 

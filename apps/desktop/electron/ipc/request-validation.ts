@@ -1,3 +1,4 @@
+import { isChimeVolume, isCompletionChimeSound } from "../../contracts/completion-chime";
 import {
   parseExtensionAction,
   type ExtensionFlagValues,
@@ -327,10 +328,23 @@ export function expectSetChildSupervisionLoopInput(value: unknown): SetChildSupe
 export function expectNotificationPreferences(value: unknown): Partial<NotificationPreferences> {
   const record = expectRecord(value, "preferences");
   let preferences: Partial<NotificationPreferences> = {};
-  for (const key of ["backgroundCompletion", "backgroundFailure", "attentionNeeded"] as const) {
+  for (const key of [
+    "backgroundCompletion",
+    "backgroundFailure",
+    "attentionNeeded",
+    "chimeEnabled",
+  ] as const) {
     if (Object.hasOwn(record, key)) {
       preferences = { ...preferences, [key]: expectBoolean(record[key], `preferences.${key}`) };
     }
+  }
+  if (Object.hasOwn(record, "chimeSound")) {
+    if (!isCompletionChimeSound(record.chimeSound)) throw new TypeError("Invalid chime sound");
+    preferences = { ...preferences, chimeSound: record.chimeSound };
+  }
+  if (Object.hasOwn(record, "chimeVolume")) {
+    if (!isChimeVolume(record.chimeVolume)) throw new TypeError("Invalid chime volume");
+    preferences = { ...preferences, chimeVolume: record.chimeVolume };
   }
   return preferences;
 }

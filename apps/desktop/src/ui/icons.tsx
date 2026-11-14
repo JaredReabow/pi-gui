@@ -716,7 +716,7 @@ export function SunIcon() {
   );
 }
 
-export function BellIcon() {
+export function BellIcon({ muted = false }: { readonly muted?: boolean }) {
   return (
     <Icon>
       <path
@@ -731,6 +731,9 @@ export function BellIcon() {
         strokeLinecap="round"
         strokeWidth="1.35"
       />
+      {muted ? (
+        <path d="m3 3 14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      ) : null}
     </Icon>
   );
 }

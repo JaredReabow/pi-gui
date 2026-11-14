@@ -17,6 +17,7 @@ import type {
   WorkspaceRecord,
 } from "../../contracts/desktop-state";
 import { resolvePackagedAppExecutable } from "./packaged-app";
+import { isOwnedElectronMain } from "./electron-process-owner";
 import { TINY_PNG_BASE64 } from "./native-input";
 
 export {
@@ -29,11 +30,13 @@ export {
   resolvePackagedReleaseZip,
 } from "./packaged-app";
 export * from "./native-input";
+export { isOwnedElectronMain };
 
 const desktopDir = resolve(__dirname, "..", "..");
 const execFileAsync = promisify(execFile);
 const require = createRequire(__filename);
-const electronExecutablePath = require("electron") as string;
+const electronExecutablePath =
+  process.env.PI_APP_TEST_ELECTRON_EXECUTABLE?.trim() || (require("electron") as string);
 const REAL_AUTH_ENV_VAR = "PI_APP_REAL_AUTH";
 // Quit is bounded at a few seconds in main; past this the app is stuck, not slow.
 const APP_EXIT_TIMEOUT_MS = 30_000;
@@ -73,6 +76,7 @@ export type DesktopTestMode = "foreground" | "background";
 
 export interface DesktopLaunchIdentity {
   readonly pid: number;
+  readonly parentPid: number;
   readonly appPath: string;
   readonly userData: string;
   readonly visible: boolean;
@@ -166,7 +170,12 @@ function isWorkspacePaths(
 function normalizeLaunchOptions(
   options: readonly string[] | LaunchDesktopOptions,
 ): LaunchDesktopOptions {
-  return isWorkspacePaths(options) ? { initialWorkspaces: options } : options;
+  const normalized = isWorkspacePaths(options) ? { initialWorkspaces: options } : options;
+  // Explicit interactive Windows audit: hidden DComp surfaces do not reliably
+  // accept CDP input/capture. Report foreground identity, never background proof.
+  return process.platform === "win32" && process.env.PI_APP_TEST_VISIBLE_UI === "1"
+    ? { ...normalized, testMode: "foreground" }
+    : normalized;
 }
 
 function electronCliArgs(entry?: string): string[] {
@@ -183,6 +192,11 @@ export async function launchDesktop(
   userDataDir: string,
   options: readonly string[] | LaunchDesktopOptions = [],
 ): Promise<DesktopHarness> {
+  if (process.env.PI_APP_TEST_PACKAGED_CORE === "1") {
+    if (!process.env.PI_APP_TEST_RELEASE_DIR?.trim())
+      throw new Error("Packaged Core requires PI_APP_TEST_RELEASE_DIR");
+    return launchPackagedDesktop(userDataDir, options);
+  }
   const normalized = normalizeLaunchOptions(options);
   const agentDir = await prepareAgentDir(userDataDir, normalized);
   const env = buildDesktopLaunchEnv(userDataDir, agentDir, normalized);
@@ -199,8 +213,14 @@ export async function launchDesktop(
         }
       : {};
   const electronApp = await electron.launch({
+    ...(process.env.PI_APP_TEST_ELECTRON_EXECUTABLE
+      ? { executablePath: electronExecutablePath }
+      : {}),
     args: electronCliArgs(desktopDir),
-    cwd: desktopDir,
+    cwd:
+      process.platform === "win32" && process.env.PI_APP_TEST_ELECTRON_EXECUTABLE
+        ? dirname(electronExecutablePath)
+        : desktopDir,
     env,
     ...recordVideo,
   });
@@ -329,6 +349,7 @@ function createDesktopHarness(
         const first = windows[0];
         return {
           pid: process.pid,
+          parentPid: process.ppid,
           appPath: app.getAppPath(),
           userData: app.getPath("userData"),
           visible: first?.isVisible() ?? false,
@@ -355,7 +376,15 @@ function createDesktopHarness(
       .then(async (identity) => {
         const documentFocused = await appPage.evaluate(() => document.hasFocus());
         const ownedPid = electronApp.process().pid;
-        if (!ownedPid || identity.pid !== ownedPid) {
+        if (
+          !isOwnedElectronMain({
+            platform: process.platform,
+            launcherPid: ownedPid,
+            launcherExecutable: electronApp.process().spawnfile,
+            mainPid: identity.pid,
+            parentPid: identity.parentPid,
+          })
+        ) {
           throw new Error(
             `Electron launch PID mismatch: main reported ${identity.pid}, owned child is ${ownedPid ?? "<none>"}.`,
           );

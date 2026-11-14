@@ -160,7 +160,7 @@ test("verifies Stage 2 appearance retention across independent Main round trips"
           same(saved.pinnedSessionOrder, existing.pinnedSessionOrder);
           same(saved.workspaceOrder, existing.workspaceOrder);
           same(saved.folderPreferencesByWorkspace, existing.folderPreferencesByWorkspace);
-          same(saved.notificationPreferences, existing.notificationPreferences);
+          same(saved.notificationPreferences, { ...existing.notificationPreferences, chimeEnabled: true, chimeSound: 'typewriter-return', chimeVolume: 60 });
           same(saved.initiatingOriginBySession, existing.initiatingOriginBySession);
           same(saved.createdAtBySession, existing.createdAtBySession);
           assert.equal(saved.themeMode, existing.themeMode);

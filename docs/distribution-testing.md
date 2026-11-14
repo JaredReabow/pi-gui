@@ -161,6 +161,18 @@ The focused telemetry suite has one optional canonical-source provenance check. 
 them that suite remains `not-run`. Loopback receipt evidence proves isolated test transport only.
 Production ingestion remains a separate, human-authorized `production-ingestion` evidence layer.
 
+## Windows packaged UI checks
+
+A Windows unpacked build can be tested in an isolated Windows user session with the existing Electron launcher. `PI_APP_TEST_RELEASE_DIR` points at the release directory (or directly at the unpacked app). The launcher recognizes x64 and ARM64 unpacked directories and verifies the application resource file before selecting an executable; it does not launch an installer.
+
+Set `PI_APP_TEST_PACKAGED_CORE=1` to run ordinary Core entry points against that packaged build, rather than a development Electron executable. This is an explicit test target, not a production mode or permission override. Profiles/workspaces remain isolated and provider credentials remain scrubbed. For a development checkout with dependencies installed for a different host, `PI_APP_TEST_ELECTRON_EXECUTABLE` can select the Windows development Electron binary; runtime workspace dependencies must also be usable on Windows.
+
+For an interactive Windows VM audit, `PI_APP_TEST_VISIBLE_UI=1` explicitly requests visible foreground windows even when a fixture normally defaults to hidden mode. Windows hidden compositor surfaces can stall screenshots and discard synthetic input. This is foreground UI evidence, **not** background-window acceptance; retain separate visibility/notification checks for those claims. Do not disable graphics or sandbox policy to hide failures.
+
+Playwright uses a `cmd.exe` launcher on Windows. Process ownership therefore accepts either the directly launched main PID, or its immediate child when the owned launcher is `cmd.exe`; unrelated processes remain rejected. Profile identity, telemetry isolation and requested window-mode checks still apply.
+
+Distinguish an x64 build running under Windows-on-ARM emulation from a native ARM64 build. A cross-build alone is not Windows runtime proof, and fixture-backed Windows tests do not establish live-provider authentication or clean-machine installer behavior.
+
 ## Evidence Boundaries
 
 Keep these claims separate in the final report:

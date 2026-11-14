@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { earlyModifierChords, getSidePanelTabCommand } from "../contracts/ipc";
 import App from "./app/App";
+import { playCompletionChime, stopCompletionChimes } from "./features/notifications/chime-player";
 import { RendererErrorBoundary } from "./app/desktop-recovery";
 import { WindowFrame } from "./app/window-titlebar";
 import { I18nProvider } from "./i18n";
@@ -34,6 +35,22 @@ window.addEventListener(
 );
 
 applyLastTheme();
+
+const unsubscribeChimes = window.piApp?.onCompletionChime((playback) => {
+  void playCompletionChime(playback).catch((error: unknown) => {
+    console.warn("[completion-chime] Playback unavailable", error);
+  });
+});
+const disposeChimes = () => {
+  unsubscribeChimes?.();
+  stopCompletionChimes();
+};
+window.addEventListener("beforeunload", disposeChimes, { once: true });
+if (import.meta.hot)
+  import.meta.hot.dispose(() => {
+    window.removeEventListener("beforeunload", disposeChimes);
+    disposeChimes();
+  });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

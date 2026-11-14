@@ -2,6 +2,7 @@ import type { DesktopNotificationPermissionStatus } from "../../../contracts/ipc
 import type { NotificationPreferences } from "../../../contracts/desktop-state";
 import { useTranslation, type Translate } from "../../i18n";
 import { SettingsSwitch } from "./settings-controls";
+import { ChimeSettings } from "../notifications/chime-settings";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
 interface SettingsNotificationsSectionProps {
@@ -22,20 +23,31 @@ export function SettingsNotificationsSection({
   onOpenSystemNotificationSettings,
 }: SettingsNotificationsSectionProps) {
   const { t } = useTranslation();
+  const mac = window.piApp?.platform === "darwin";
   const statusLabel = labelForPermissionStatus(t, notificationPermissionStatus);
-  const statusDescription = descriptionForPermissionStatus(t, notificationPermissionStatus);
+  const statusDescription = descriptionForPermissionStatus(t, notificationPermissionStatus, mac);
   const showAskMacOs = notificationPermissionStatus === "default";
   const showOpenSystemSettings = notificationPermissionStatus === "denied";
   const showRecoveryActions = showAskMacOs || showOpenSystemSettings;
 
   return (
     <>
+      <ChimeSettings
+        preferences={notificationPreferences}
+        onChange={onSetNotificationPreferences}
+      />
       <SettingsGroup
         title={t("settings.notifications.groupSystem")}
-        description={t("settings.notifications.groupSystem.description")}
+        description={t(
+          mac
+            ? "settings.notifications.groupSystem.description"
+            : "settings.notifications.system.description",
+        )}
       >
         <SettingsRow
-          title={t("settings.notifications.access.title")}
+          title={t(
+            mac ? "settings.notifications.access.title" : "settings.notifications.system.access",
+          )}
           description={statusDescription}
         >
           <span className="settings-row__value">{statusLabel}</span>
@@ -45,8 +57,16 @@ export function SettingsNotificationsSection({
             title={t("settings.notifications.turnOn.title")}
             description={
               showAskMacOs
-                ? t("settings.notifications.turnOn.descriptionAsk")
-                : t("settings.notifications.turnOn.descriptionOpen")
+                ? t(
+                    mac
+                      ? "settings.notifications.turnOn.descriptionAsk"
+                      : "settings.notifications.system.requestDescription",
+                  )
+                : t(
+                    mac
+                      ? "settings.notifications.turnOn.descriptionOpen"
+                      : "settings.notifications.system.openDescription",
+                  )
             }
           >
             <div className="settings-row__actions">
@@ -57,7 +77,11 @@ export function SettingsNotificationsSection({
                   type="button"
                   onClick={onRequestNotificationPermission}
                 >
-                  {t("settings.notifications.turnOn.ask")}
+                  {t(
+                    mac
+                      ? "settings.notifications.turnOn.ask"
+                      : "settings.notifications.system.request",
+                  )}
                 </button>
               ) : null}
               {showOpenSystemSettings ? (
@@ -77,7 +101,11 @@ export function SettingsNotificationsSection({
 
       <SettingsGroup
         title={t("settings.notifications.groupInApp")}
-        description={t("settings.notifications.groupInApp.description")}
+        description={t(
+          mac
+            ? "settings.notifications.groupInApp.description"
+            : "settings.notifications.system.alertDescription",
+        )}
       >
         <SettingsRow
           title={t("settings.notifications.completion.title")}
@@ -135,17 +163,34 @@ function labelForPermissionStatus(
 function descriptionForPermissionStatus(
   t: Translate,
   status: DesktopNotificationPermissionStatus,
+  mac: boolean,
 ): string {
   switch (status) {
     case "granted":
-      return t("settings.notifications.access.descriptionGranted");
+      return t(
+        mac
+          ? "settings.notifications.access.descriptionGranted"
+          : "settings.notifications.system.granted",
+      );
     case "denied":
-      return t("settings.notifications.access.descriptionDenied");
+      return t(
+        mac
+          ? "settings.notifications.access.descriptionDenied"
+          : "settings.notifications.system.denied",
+      );
     case "default":
-      return t("settings.notifications.access.descriptionDefault");
+      return t(
+        mac
+          ? "settings.notifications.access.descriptionDefault"
+          : "settings.notifications.system.default",
+      );
     case "unsupported":
       return t("settings.notifications.access.descriptionUnsupported");
     default:
-      return t("settings.notifications.access.descriptionChecking");
+      return t(
+        mac
+          ? "settings.notifications.access.descriptionChecking"
+          : "settings.notifications.system.checking",
+      );
   }
 }

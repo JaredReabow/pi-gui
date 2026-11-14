@@ -35,6 +35,7 @@ import { ContextMeter } from "./context-meter";
 import { ModelSelector } from "./model-selector";
 import { SummaryModelSelector } from "./summary-controls";
 import { AutonomyControls } from "./autonomy-controls";
+import { ChimeToggle } from "../notifications/chime-toggle";
 import type { SummaryTarget } from "../../../contracts/work-summaries";
 import { ExtensionNotices } from "../extensions/extension-notices";
 import { ExtensionFlagsBadge } from "../threads/extension-flags-selector";
@@ -249,6 +250,7 @@ export function ComposerPanel({
                   >
                     <PlusIcon />
                   </button>
+                  <ChimeToggle />
                   <button
                     aria-label={primaryActionIsStop ? "Stop run" : "Send message"}
                     className="button button--primary button--cta-icon"

@@ -1,3 +1,4 @@
+import { isChimeVolume, isCompletionChimeSound } from "../../contracts/completion-chime";
 import {
   childSelection_decodeInitiatingOrigin,
   type SessionInitiatingOrigin,
@@ -472,11 +473,30 @@ function validateUiState(value: unknown): Record<string, unknown> {
       objectRecord(root.notificationPreferences) ?? fail("notificationPreferences");
     knownKeys(
       preferences,
-      ["backgroundCompletion", "backgroundFailure", "attentionNeeded"],
+      [
+        "backgroundCompletion",
+        "backgroundFailure",
+        "attentionNeeded",
+        "chimeEnabled",
+        "chimeSound",
+        "chimeVolume",
+      ],
       "notificationPreferences",
     );
-    for (const key of ["backgroundCompletion", "backgroundFailure", "attentionNeeded"])
+    for (const key of [
+      "backgroundCompletion",
+      "backgroundFailure",
+      "attentionNeeded",
+      "chimeEnabled",
+    ])
       optional(preferences, key, boolean, `notificationPreferences.${key}`);
+    optional(
+      preferences,
+      "chimeSound",
+      isCompletionChimeSound,
+      "notificationPreferences.chimeSound",
+    );
+    optional(preferences, "chimeVolume", isChimeVolume, "notificationPreferences.chimeVolume");
   }
   if (root.appGlobalModelSettings !== undefined) {
     const settings = objectRecord(root.appGlobalModelSettings) ?? fail("appGlobalModelSettings");
@@ -1015,6 +1035,11 @@ function toNotificationPreferences(value: unknown): Partial<NotificationPreferen
     return undefined;
   }
   const preferences = {
+    ...(typeof candidate.chimeEnabled === "boolean"
+      ? { chimeEnabled: candidate.chimeEnabled }
+      : {}),
+    ...(isCompletionChimeSound(candidate.chimeSound) ? { chimeSound: candidate.chimeSound } : {}),
+    ...(isChimeVolume(candidate.chimeVolume) ? { chimeVolume: candidate.chimeVolume } : {}),
     ...(typeof candidate.backgroundCompletion === "boolean"
       ? { backgroundCompletion: candidate.backgroundCompletion }
       : {}),

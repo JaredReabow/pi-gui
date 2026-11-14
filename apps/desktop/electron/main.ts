@@ -57,6 +57,7 @@ import { listWorkspaceFiles, readWorkspaceFile } from "./platform/files/app-stor
 import { resolveExistingWorkspacePath } from "./platform/files/workspace-paths";
 import { MAIN_DEV_RELOAD_MARKER } from "./dev-reload-main-probe";
 import { NotificationManager } from "./platform/notification-manager";
+import { CompletionChimeCoordinator } from "./platform/completion-chime";
 import { NotificationPermissionService } from "./platform/notification-permission";
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./platform/update-checker";
 import { ThemeManager } from "./platform/theme-manager";
@@ -230,6 +231,7 @@ async function runScheduledTaskRuntimeToolForTest(
 }
 
 let stopNotifications: (() => void) | undefined;
+let stopChimes: (() => void) | undefined;
 let stopUpdateChecker: (() => void) | undefined;
 let stopPruningTerminals: (() => void) | undefined;
 let retainedTerminalWorkspacePathSignature = "";
@@ -1335,6 +1337,17 @@ app
       },
     );
     stopNotifications = notificationManager.start();
+    const chimes = new CompletionChimeCoordinator((playback) => {
+      if (mainWindow && canPublishToWindow(mainWindow))
+        mainWindow.webContents.send(desktopIpc.completionChime, playback);
+    });
+    const unsubscribeChimes = store.subscribeToSessionEvents((event, state) =>
+      chimes.handle(event, state.notificationPreferences),
+    );
+    stopChimes = () => {
+      unsubscribeChimes();
+      chimes.stop();
+    };
     if (!isDev) {
       stopUpdateChecker = initUpdateChecker({
         profile: distributionProfile,
@@ -1515,6 +1528,8 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin" || appTestMode !== undefined) {
     stopNotifications?.();
     stopNotifications = undefined;
+    stopChimes?.();
+    stopChimes = undefined;
     notificationManager = undefined;
     notificationPermissionService?.dispose();
     notificationPermissionService = undefined;
@@ -1531,6 +1546,8 @@ app.on("window-all-closed", () => {
 app.on("before-quit", (event) => {
   stopNotifications?.();
   stopNotifications = undefined;
+  stopChimes?.();
+  stopChimes = undefined;
   notificationManager = undefined;
   notificationPermissionService?.dispose();
   notificationPermissionService = undefined;

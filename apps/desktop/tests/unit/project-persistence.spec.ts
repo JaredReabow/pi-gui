@@ -194,7 +194,7 @@ test("actual Main retains appearance state across unrelated full saves and reloa
         same(userSaved.workspaceOrder, existing.workspaceOrder);
         same(userSaved.folderPreferencesByWorkspace, existing.folderPreferencesByWorkspace);
         assert.equal(userSaved.allThreadsSort, "created");
-        same(userSaved.notificationPreferences, existing.notificationPreferences);
+        same(userSaved.notificationPreferences, { ...existing.notificationPreferences, chimeEnabled: true, chimeSound: 'typewriter-return', chimeVolume: 60 });
         same(userSaved.initiatingOriginBySession, existing.initiatingOriginBySession);
         same(userSaved.createdAtBySession, existing.createdAtBySession);
         assert.equal(userSaved.themeMode, "dark");

@@ -159,7 +159,7 @@ export const en = {
   "settings.section.general.description": "App and runtime defaults.",
   "settings.section.appearance.description":
     "Choose light, dark or system mode and a color preset.",
-  "settings.section.notifications.description": "Choose which background events alert you.",
+  "settings.section.notifications.description": "Choose completion sounds and background alerts.",
   "settings.section.shortcuts.description": "Shortcuts available across the app.",
   "settings.section.providers.description": "Connect providers and manage auth for {workspace}.",
   "settings.section.models.description":
@@ -240,6 +240,58 @@ export const en = {
   "settings.appearance.preset.gruvbox": "Warm retro contrast.",
   "settings.appearance.preset.github": "GitHub-style light and dark surfaces.",
   "settings.appearance.preset.vscode": "Familiar editor colours with blue accents.",
+  "settings.chime.title": "Completion chime",
+  "settings.chime.description":
+    "A sound when an AI turn finishes, including background threads. Independent of desktop notifications.",
+  "settings.chime.enabled": "Play completion chimes",
+  "settings.chime.enabledDescription": "The bell beside Send toggles this app-wide setting.",
+  "settings.chime.sound": "Chime sound",
+  "settings.chime.soundDescription":
+    "From soft and quiet to loud and obnoxious. Preview plays only when you ask, even if chimes are muted.",
+  "settings.chime.preview": "Preview chime",
+  "settings.chime.volume": "Chime volume",
+  "settings.chime.volumeDescription":
+    "0% is silent. Loud presets can be startling; start with a low volume.",
+  "settings.chime.mute": "Mute completion chimes",
+  "settings.chime.unmute": "Enable completion chimes",
+  "settings.chime.saveError": "Could not save chime preference.",
+  "settings.chime.playError": "Could not play the chime. Check audio output and try Preview again.",
+  "settings.chime.intensity.quiet": "Very quiet",
+  "settings.chime.intensity.gentle": "Gentle",
+  "settings.chime.intensity.bright": "Bright",
+  "settings.chime.intensity.bold": "Attention-grabbing",
+  "settings.chime.intensity.loud": "Loud / obnoxious",
+  "settings.chime.sound.soft-tap": "Soft tap",
+  "settings.chime.sound.felt-bell": "Felt bell",
+  "settings.chime.sound.wind-chimes": "Wind chimes",
+  "settings.chime.sound.glass-ping": "Glass ping",
+  "settings.chime.sound.marimba": "Marimba",
+  "settings.chime.sound.typewriter-return": "Typewriter return bell (default)",
+  "settings.chime.sound.desk-bell": "Desk bell",
+  "settings.chime.sound.digital-chirp": "Digital chirp",
+  "settings.chime.sound.arcade": "Arcade success",
+  "settings.chime.sound.doorbell": "Doorbell",
+  "settings.chime.sound.gong": "Gong",
+  "settings.chime.sound.fanfare": "Fanfare",
+  "settings.chime.sound.klaxon": "Klaxon",
+  "settings.chime.sound.air-horn": "Air horn",
+  "settings.notifications.system.description":
+    "Your operating system controls desktop notification access.",
+  "settings.notifications.system.access": "System notification access",
+  "settings.notifications.system.request": "Request access",
+  "settings.notifications.system.requestDescription":
+    "Request desktop notification access for background updates.",
+  "settings.notifications.system.openDescription":
+    "Notifications are turned off. Open system settings to enable them.",
+  "settings.notifications.system.alertDescription":
+    "Choose which background events should notify when system access is enabled.",
+  "settings.notifications.system.granted":
+    "Your system allows desktop notifications for background thread updates.",
+  "settings.notifications.system.denied":
+    "Desktop notifications are turned off for pi-gui. Enable them in your system notification settings.",
+  "settings.notifications.system.default":
+    "Desktop notification access has not been requested yet.",
+  "settings.notifications.system.checking": "Checking desktop notification access.",
   "settings.notifications.groupSystem": "System",
   "settings.notifications.groupSystem.description":
     "macOS decides whether pi-gui can show desktop notifications at all.",
