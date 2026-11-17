@@ -49,6 +49,7 @@
 .artifacts/
 .cursor/
 .pnpm-store/
+.local-data/
 .worktrees/
 .claude/worktrees/
 .codex/worktrees/

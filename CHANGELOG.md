@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Development
+
+- Moved the local checkout and bulk pi-gui data to Partition 2, retaining compatibility
+  links for existing paths. Project pnpm storage now stays inside the checkout, and
+  private host data is excluded from Git, formatting, and linting.
+
 ### Conversation
 
 - Fixed premature compaction timeouts on long split turns: both native summary stages and

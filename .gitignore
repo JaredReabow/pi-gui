@@ -13,6 +13,8 @@ release-*/
 /.parallelism/
 /artifacts/
 /.pnpm-store/
+# Host-only app history, credentials, caches, and installation backups.
+/.local-data/
 playwright-report/
 test-results/
 .claude/worktrees/

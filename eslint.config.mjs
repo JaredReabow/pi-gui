@@ -44,6 +44,7 @@ export default [
       ),
       "**/*.d.{ts,mts,cts}",
       ".pnpm-store/**",
+      ".local-data/**",
       "artifacts/**",
       ".parallelism/**",
       ".cursor/**",
